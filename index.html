@@ -434,7 +434,7 @@ function renderBestellungen(wrap, meineNur){
   if (liste.length===0){
     wrap.append(h("div",{class:"empty"},
       h("div",{class:"big",text: meineNur ? "Noch keine Bestellungen." : "Es sind noch keine Bestellungen da."}),
-      h("div",{class:"muted",text: meineNur ? "Wechsle zu „Bestellen", um eine anzulegen." : ""})));
+      h("div",{class:"muted",text: meineNur ? 'Wechsle zu „Bestellen“, um eine anzulegen.' : ''})));
     return;
   }
 
@@ -551,7 +551,7 @@ function renderArtikel(wrap){
 
   if (state.gruppen.length===0){
     wrap.append(h("div",{class:"empty"}, h("div",{class:"muted",
-      text:"Es gibt noch keine Gruppen — lege zuerst unter „Gruppen" welche an."})));
+      text:"Es gibt noch keine Gruppen — lege zuerst unter „Gruppen“ welche an."})));
   }
 
   // Liste je Gruppe
@@ -579,7 +579,7 @@ function artikelZeile(a){
     onclick:()=>bearbeiteArtikel(zeile, a)});
   const delBtn = h("button",{class:"btn-danger btn-sm",text:"Löschen",
     onclick:async ()=>{
-      if (!confirm('Artikel „'+a.name+'" löschen?')) return;
+      if (!confirm('Artikel „'+a.name+'“ löschen?')) return;
       const { error } = await sb.from("artikel").delete().eq("id",a.id);
       if (error){ toast("Fehler: "+error.message,"err"); return; }
       toast("Artikel gelöscht.","ok"); await ladeDaten(); renderApp();
@@ -653,8 +653,8 @@ function renderGruppen(wrap){
         }}),
         h("button",{class:"btn-danger btn-sm",text:"Löschen",onclick:async ()=>{
           const warn = anzahl>0
-            ? 'Gruppe „'+g.name+'" löschen? ACHTUNG: '+anzahl+' Artikel darin werden mitgelöscht!'
-            : 'Gruppe „'+g.name+'" löschen?';
+            ? 'Gruppe „'+g.name+'“ löschen? ACHTUNG: '+anzahl+' Artikel darin werden mitgelöscht!'
+            : 'Gruppe „'+g.name+'“ löschen?';
           if (!confirm(warn)) return;
           const { error } = await sb.from("gruppen").delete().eq("id",g.id);
           if (error){ toast("Fehler: "+error.message,"err"); return; }
@@ -696,7 +696,7 @@ function renderAbteilungen(wrap){
     addBtn.disabled=false; addBtn.textContent="Abteilung anlegen";
     if (error){ toast(error,"err"); return; }
     nI.value=""; kI.value=""; pI.value="";
-    toast("Abteilung „"+name+"" angelegt.","ok");
+    toast('Abteilung „'+name+'“ angelegt.',"ok");
     await ladeDaten(); renderApp();
   }});
 
@@ -736,7 +736,7 @@ function renderAbteilungen(wrap){
     const { error } = await rufeFunktion({aktion:"passwort_setzen", name:zielSel.value, passwort:npI.value});
     pwBtn.disabled=false; pwBtn.textContent="Passwort setzen";
     if (error){ toast(error,"err"); return; }
-    npI.value=""; toast("Passwort für „"+zielSel.value+"" gesetzt.","ok");
+    npI.value=""; toast("Passwort für „"+zielSel.value+"“ gesetzt.","ok");
   }});
   wrap.append(h("div",{class:"card"},
     h("h3",{text:"Passwort setzen / zurücksetzen",style:"margin-bottom:.8rem"}),
