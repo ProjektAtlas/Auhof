@@ -271,7 +271,7 @@ function tabsFor(rolle){
 function renderLogin(){
   clear(app);
   const nameI = h("input",{type:"text",autocomplete:"username"});
-  const pwI   = h("input",{type:"password",autocomplete:"current-password",placeholder:"Passwort"});
+  const pwI   = h("input",{type:"password",autocomplete:"current-password"});
   const btn   = h("button",{class:"btn",style:"width:100%",text:"Anmelden"});
 
   async function tryLogin(){
