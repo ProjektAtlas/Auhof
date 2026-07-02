@@ -310,9 +310,9 @@ function renderApp(){
   if (!state.tab || !tabDefs.find(t=>t[0]===state.tab)) state.tab = tabDefs[0][0];
 
   const topbar = h("div",{class:"topbar"},
-    h("div",{class:"brand"}, h("span",{},"Auhof"), " Bestellungen"),
+    h("div",{class:"brand"}, h("span",{},"Auhof"), " Orders"),
     h("div",{class:"who"},
-      h("div",{}, h("b",{text:k.name}), h("span",{class:"role-chip",text:ROLLE_LABEL[k.rolle]||k.rolle})),
+      h("div",{}, h("b",{text:k.name})),
     ),
     h("button",{class:"btn-ghost btn-sm",text:"Abmelden",onclick:logout})
   );
