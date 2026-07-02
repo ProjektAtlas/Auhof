@@ -270,7 +270,7 @@ function tabsFor(rolle){
 // =====================================================================
 function renderLogin(){
   clear(app);
-  const nameI = h("input",{type:"text",autocomplete:"username",placeholder:"z.B. Seegasse"});
+  const nameI = h("input",{type:"text",autocomplete:"username"});
   const pwI   = h("input",{type:"password",autocomplete:"current-password",placeholder:"Passwort"});
   const btn   = h("button",{class:"btn",style:"width:100%",text:"Anmelden"});
 
@@ -287,9 +287,9 @@ function renderLogin(){
 
   app.append(
     h("div",{class:"login"},
+      h("h1",{style:"font-size:38px;text-align:center;margin-bottom:1.1rem"},
+        h("span",{style:"color:var(--gold)"},"Auhof"), " Orders"),
       h("div",{class:"card"},
-        h("h1",{},h("span",{},"Auhof"), " Bestellungen"),
-        h("div",{class:"sub",text:"Mit Abteilungsname und Passwort anmelden."}),
         h("div",{class:"stack"},
           h("div",{}, h("label",{text:"Name"}), nameI),
           h("div",{}, h("label",{text:"Passwort"}), pwI),
