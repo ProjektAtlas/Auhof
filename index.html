@@ -251,7 +251,7 @@ async function ladeDaten(){
     state.bestellungen = b.data || [];
   }
 
-  if (r==="admin"){
+  if (r==="admin" || r==="leitung"){
     const k = await sb.from("konten").select("id,name,rolle,kuerzel").order("rolle").order("name");
     state.konten = k.data || [];
   }
@@ -260,7 +260,7 @@ async function ladeDaten(){
 function tabsFor(rolle){
   if (rolle==="abteilung") return [["bestellen","Bestellen"],["meine","Meine Bestellungen"]];
   if (rolle==="konditorei") return [["alle","Bestellungen"]];
-  if (rolle==="leitung")   return [["alle","Bestellungen"],["artikel","Artikel"],["gruppen","Gruppen"]];
+  if (rolle==="leitung")   return [["alle","Bestellungen"],["artikel","Artikel"],["gruppen","Gruppen"],["abteilungen","Abteilungen"]];
   if (rolle==="admin")     return [["alle","Bestellungen"],["artikel","Artikel"],["gruppen","Gruppen"],["abteilungen","Abteilungen"]];
   return [];
 }
@@ -726,8 +726,10 @@ function renderAbteilungen(wrap){
   ));
 
   // --- Passwort setzen (jedes Konto) ---
+  const istLeitung = state.konto.rolle === "leitung";
+  const zielKonten = istLeitung ? state.konten.filter(k=>k.rolle!=="admin") : state.konten;
   const zielSel = h("select",{},
-    ...state.konten.map(k=>h("option",{value:k.name,text:k.name+" ("+(ROLLE_LABEL[k.rolle]||k.rolle)+")"}))
+    ...zielKonten.map(k=>h("option",{value:k.name,text:k.name+" ("+(ROLLE_LABEL[k.rolle]||k.rolle)+")"}))
   );
   const npI = h("input",{type:"text",placeholder:"neues Passwort, mind. 8 Zeichen"});
   const pwBtn = h("button",{class:"btn",text:"Passwort setzen",onclick:async ()=>{
