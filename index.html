@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1712">
+<title>Auhof · Bestellungen</title>
+<link rel="icon" href="favicon.ico">
+<link rel="apple-touch-icon" href="auhof-icon-512.png">
+<link rel="manifest" href="manifest.json">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#1a1712; --panel:#241f18; --panel2:#2e2820; --line:#3a3227;
+    --ink:#ece6da; --dim:#a99f8d; --faint:#6f6656;
+    --gold:#e0a458; --gold-deep:#c98a3c; --danger:#c65c6a; --ok:#8bb06a;
+    --radius:14px; --mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:'Inter',system-ui,sans-serif; font-size:15px; line-height:1.5;
+    -webkit-font-smoothing:antialiased; min-height:100vh;
+  }
+  h1,h2,h3{font-family:'Space Grotesk',sans-serif; font-weight:600; margin:0}
+  .mono{font-family:var(--mono); font-feature-settings:'tnum' 1; letter-spacing:.02em}
+  button{font-family:inherit; font-size:14px; cursor:pointer; border:none; border-radius:10px; padding:.6rem 1rem; transition:transform .06s ease, background .15s ease, border-color .15s}
+  button:active{transform:translateY(1px)}
+  .btn{background:var(--gold); color:#241a0c; font-weight:600}
+  .btn:hover{background:var(--gold-deep)}
+  .btn-ghost{background:transparent; color:var(--ink); border:1px solid var(--line)}
+  .btn-ghost:hover{border-color:var(--dim)}
+  .btn-danger{background:transparent; color:var(--danger); border:1px solid #4a2c30}
+  .btn-danger:hover{background:#2c1c1e}
+  .btn-sm{padding:.35rem .6rem; font-size:13px; border-radius:8px}
+  input,select{
+    font-family:inherit; font-size:15px; color:var(--ink); background:var(--panel2);
+    border:1px solid var(--line); border-radius:10px; padding:.55rem .7rem; width:100%;
+  }
+  input:focus,select:focus{outline:2px solid var(--gold-deep); outline-offset:-1px; border-color:var(--gold-deep)}
+  label{display:block; font-size:13px; color:var(--dim); margin-bottom:.3rem}
+  a{color:var(--gold)}
+
+  /* Layout */
+  .topbar{
+    position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:1rem;
+    padding:.8rem 1.1rem; background:rgba(26,23,18,.9); backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);
+  }
+  .brand{font-family:'Space Grotesk'; font-weight:700; font-size:18px; letter-spacing:.01em}
+  .brand span{color:var(--gold)}
+  .who{margin-left:auto; text-align:right; font-size:13px; color:var(--dim)}
+  .who b{color:var(--ink); font-weight:600}
+  .role-chip{display:inline-block; font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--gold); border:1px solid #4a3a22; border-radius:999px; padding:.1rem .5rem; margin-left:.4rem}
+  .tabs{display:flex; gap:.3rem; padding:.6rem 1rem 0; border-bottom:1px solid var(--line); overflow-x:auto}
+  .tab{background:transparent; color:var(--dim); border:none; border-bottom:2px solid transparent;
+    border-radius:0; padding:.6rem .7rem; font-weight:500; white-space:nowrap}
+  .tab.active{color:var(--ink); border-bottom-color:var(--gold)}
+  .wrap{max-width:900px; margin:0 auto; padding:1.4rem 1.1rem 5rem}
+
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:1.1rem}
+  .card + .card{margin-top:.9rem}
+  .muted{color:var(--dim)}
+  .row{display:flex; gap:.6rem; align-items:center; flex-wrap:wrap}
+  .stack{display:flex; flex-direction:column; gap:.7rem}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:.7rem}
+  @media(max-width:560px){.grid2{grid-template-columns:1fr}}
+
+  /* Login */
+  .login{max-width:360px; margin:12vh auto 0; padding:0 1.1rem}
+  .login .card{padding:1.6rem}
+  .login h1{font-size:24px; margin-bottom:.2rem}
+  .login .sub{color:var(--dim); margin-bottom:1.4rem; font-size:14px}
+
+  /* Groups & articles */
+  .group-h{display:flex; align-items:baseline; gap:.6rem; margin:1.4rem 0 .5rem}
+  .group-h:first-child{margin-top:.2rem}
+  .group-h h3{font-size:16px}
+  .group-h .count{font-size:12px; color:var(--faint)}
+  .art{display:flex; align-items:center; gap:.7rem; padding:.6rem .8rem; background:var(--panel);
+    border:1px solid var(--line); border-radius:10px}
+  .art + .art{margin-top:.4rem}
+  .art .name{flex:1}
+  .art .name small{color:var(--faint); font-size:12px; margin-left:.4rem}
+  .inactive{opacity:.5}
+  .qty{width:74px; text-align:center}
+  .stepper{display:flex; align-items:center; gap:.35rem}
+  .stepper button{width:32px; height:32px; padding:0; background:var(--panel2); color:var(--ink);
+    border:1px solid var(--line); font-size:18px; line-height:1}
+
+  /* Order tickets */
+  .ticket{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden}
+  .ticket + .ticket{margin-top:.8rem}
+  .ticket-top{display:flex; align-items:center; gap:.7rem; padding:.85rem 1rem; border-bottom:1px dashed var(--line)}
+  .ticket-nr{font-family:var(--mono); font-weight:700; color:var(--gold); font-size:15px}
+  .ticket-meta{margin-left:auto; text-align:right; font-size:12px; color:var(--dim)}
+  .ticket-body{padding:.7rem 1rem}
+  .pos{display:flex; gap:.7rem; padding:.22rem 0; font-size:14px}
+  .pos .m{font-family:var(--mono); font-weight:700; min-width:2.4em; text-align:right; color:var(--ink)}
+  .pos .n{color:var(--ink)}
+  .ticket-actions{display:flex; gap:.5rem; padding:.6rem 1rem .85rem}
+
+  /* summary bar for ordering */
+  .summary{position:fixed; left:0; right:0; bottom:0; z-index:20; background:rgba(36,31,24,.96);
+    backdrop-filter:blur(8px); border-top:1px solid var(--line); padding:.8rem 1.1rem;
+    display:flex; align-items:center; gap:1rem}
+  .summary .info{font-size:14px; color:var(--dim)}
+  .summary .info b{color:var(--ink)}
+  .summary .btn{margin-left:auto}
+
+  .toast{position:fixed; left:50%; bottom:5.5rem; transform:translateX(-50%); z-index:50;
+    background:#0f0d0a; color:var(--ink); border:1px solid var(--line); border-radius:10px;
+    padding:.7rem 1rem; font-size:14px; max-width:88vw; box-shadow:0 8px 30px rgba(0,0,0,.5)}
+  .toast.err{border-color:#5a2f34; color:#f0c2c7}
+  .toast.ok{border-color:#3f5030}
+
+  .empty{text-align:center; color:var(--dim); padding:2.5rem 1rem}
+  .empty .big{font-size:15px; color:var(--ink); margin-bottom:.3rem}
+
+  table.list{width:100%; border-collapse:collapse}
+  table.list th{text-align:left; font-size:12px; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--faint); font-weight:600; padding:.4rem .5rem; border-bottom:1px solid var(--line)}
+  table.list td{padding:.55rem .5rem; border-bottom:1px solid var(--line); vertical-align:middle}
+
+  @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+  /* Print */
+  #print-area{position:fixed; left:-10000px; top:0}
+  @media print{
+    body{background:#fff}
+    body > *:not(#print-area){display:none!important}
+    #print-area{position:static; left:0; color:#000; padding:0; font-family:Inter,sans-serif}
+    #print-area h2{font-family:'Space Grotesk'}
+    #print-area .p-nr{font-family:var(--mono); font-weight:700}
+    #print-area table{width:100%; border-collapse:collapse; margin-top:12px}
+    #print-area td{padding:4px 6px; border-bottom:1px solid #ccc}
+    #print-area .pm{font-family:var(--mono); font-weight:700; text-align:right; width:60px}
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="print-area"></div>
+
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const SUPABASE_URL  = "https://rxbexbchygldbcohfovs.supabase.co";
+const SUPABASE_ANON = "sb_publishable_X5lVMyp3A5Q3q7v54JRwTg_xcuGLpGx";
+const FUNKTION      = "swift-responder";
+const MAIL_DOMAIN   = "@auhof.local";
+
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+// ---- App-Zustand ----
+const state = {
+  konto:null,            // { id, name, rolle, kuerzel }
+  tab:null,
+  gruppen:[], artikel:[], bestellungen:[], konten:[],
+  cart:{},               // { artikel_id: menge }
+};
+
+const app = document.getElementById("app");
+
+// ---- sichere DOM-Erstellung (kein innerHTML mit Daten) ----
+function h(tag, attrs={}, ...kids){
+  const e = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs)){
+    if (v==null) continue;
+    if (k==="class") e.className=v;
+    else if (k==="text") e.textContent=v;
+    else if (k==="html") e.innerHTML=v;            // nur für statische Icons
+    else if (k.startsWith("on") && typeof v==="function") e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k,v);
+  }
+  for (const kid of kids.flat()){
+    if (kid==null || kid===false) continue;
+    e.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  return e;
+}
+function clear(node){ while(node.firstChild) node.removeChild(node.firstChild); }
+
+let toastTimer=null;
+function toast(msg, kind=""){
+  const t = h("div",{class:"toast "+kind, text:msg});
+  document.body.append(t);
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.remove(), 3800);
+}
+
+const ROLLE_LABEL = {admin:"Admin", leitung:"Leitung", abteilung:"Abteilung", konditorei:"Konditorei"};
+function fmtDatum(iso){
+  const d=new Date(iso);
+  return d.toLocaleDateString("de-CH",{day:"2-digit",month:"2-digit",year:"numeric"})
+       + " " + d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"});
+}
+
+// =====================================================================
+//  Auth
+// =====================================================================
+async function login(name, passwort){
+  const email = name.trim().toLowerCase() + MAIL_DOMAIN;
+  const { error } = await sb.auth.signInWithPassword({ email, password:passwort });
+  if (error) return { error:"Name oder Passwort stimmt nicht." };
+  return await ladeKontoUndStarten();
+}
+
+async function ladeKontoUndStarten(){
+  const { data:{ user } } = await sb.auth.getUser();
+  if (!user) return { error:"Nicht angemeldet." };
+  const { data:konto, error } = await sb.from("konten")
+    .select("id,name,rolle,kuerzel").eq("id", user.id).single();
+  if (error || !konto){
+    await sb.auth.signOut();
+    return { error:"Für dieses Konto ist noch kein Zugang eingerichtet." };
+  }
+  state.konto = konto;
+  await ladeDaten();
+  return { ok:true };
+}
+
+async function logout(){
+  await sb.auth.signOut();
+  state.konto=null; state.cart={}; state.tab=null;
+  renderLogin();
+}
+
+// =====================================================================
+//  Daten laden (je nach Rolle)
+// =====================================================================
+async function ladeDaten(){
+  const r = state.konto.rolle;
+
+  const g = await sb.from("gruppen").select("*").order("sortierung").order("name");
+  state.gruppen = g.data || [];
+
+  const a = await sb.from("artikel").select("*").order("name");
+  state.artikel = a.data || [];
+
+  if (r!=="abteilung" || true){
+    const b = await sb.from("bestellungen")
+      .select(`id,bestellnr,jahr,monat,laufnr,erstellt_am,
+               abteilung:konten!bestellungen_abteilung_id_fkey(name,kuerzel),
+               positionen:bestellpositionen(menge, artikel(name))`)
+      .order("erstellt_am",{ascending:false});
+    state.bestellungen = b.data || [];
+  }
+
+  if (r==="admin"){
+    const k = await sb.from("konten").select("id,name,rolle,kuerzel").order("rolle").order("name");
+    state.konten = k.data || [];
+  }
+}
+
+function tabsFor(rolle){
+  if (rolle==="abteilung") return [["bestellen","Bestellen"],["meine","Meine Bestellungen"]];
+  if (rolle==="konditorei") return [["alle","Bestellungen"]];
+  if (rolle==="leitung")   return [["alle","Bestellungen"],["artikel","Artikel"],["gruppen","Gruppen"]];
+  if (rolle==="admin")     return [["alle","Bestellungen"],["artikel","Artikel"],["gruppen","Gruppen"],["abteilungen","Abteilungen"]];
+  return [];
+}
+
+// =====================================================================
+//  Render: Login
+// =====================================================================
+function renderLogin(){
+  clear(app);
+  const nameI = h("input",{type:"text",autocomplete:"username",placeholder:"z.B. Seegasse"});
+  const pwI   = h("input",{type:"password",autocomplete:"current-password",placeholder:"Passwort"});
+  const btn   = h("button",{class:"btn",style:"width:100%",text:"Anmelden"});
+
+  async function tryLogin(){
+    if (!nameI.value.trim() || !pwI.value) return toast("Name und Passwort eingeben.","err");
+    btn.disabled=true; btn.textContent="Anmelden…";
+    const res = await login(nameI.value, pwI.value);
+    btn.disabled=false; btn.textContent="Anmelden";
+    if (res.error) return toast(res.error,"err");
+    renderApp();
+  }
+  btn.addEventListener("click", tryLogin);
+  pwI.addEventListener("keydown", e=>{ if(e.key==="Enter") tryLogin(); });
+
+  app.append(
+    h("div",{class:"login"},
+      h("div",{class:"card"},
+        h("h1",{},h("span",{},"Auhof"), " Bestellungen"),
+        h("div",{class:"sub",text:"Mit Abteilungsname und Passwort anmelden."}),
+        h("div",{class:"stack"},
+          h("div",{}, h("label",{text:"Name"}), nameI),
+          h("div",{}, h("label",{text:"Passwort"}), pwI),
+          btn
+        )
+      )
+    )
+  );
+}
+
+// =====================================================================
+//  Render: App-Rahmen
+// =====================================================================
+function renderApp(){
+  clear(app);
+  const k = state.konto;
+  const tabDefs = tabsFor(k.rolle);
+  if (!state.tab || !tabDefs.find(t=>t[0]===state.tab)) state.tab = tabDefs[0][0];
+
+  const topbar = h("div",{class:"topbar"},
+    h("div",{class:"brand"}, h("span",{},"Auhof"), " Bestellungen"),
+    h("div",{class:"who"},
+      h("div",{}, h("b",{text:k.name}), h("span",{class:"role-chip",text:ROLLE_LABEL[k.rolle]||k.rolle})),
+    ),
+    h("button",{class:"btn-ghost btn-sm",text:"Abmelden",onclick:logout})
+  );
+
+  const tabs = h("div",{class:"tabs"},
+    ...tabDefs.map(([id,label])=>
+      h("button",{class:"tab"+(state.tab===id?" active":""),text:label,
+        onclick:()=>{ state.tab=id; renderApp(); }})
+    )
+  );
+
+  const wrap = h("div",{class:"wrap"});
+  app.append(topbar, tabs, wrap);
+
+  const view = state.tab;
+  if (view==="bestellen")      renderBestellen(wrap);
+  else if (view==="meine")     renderBestellungen(wrap, true);
+  else if (view==="alle")      renderBestellungen(wrap, false);
+  else if (view==="artikel")   renderArtikel(wrap);
+  else if (view==="gruppen")   renderGruppen(wrap);
+  else if (view==="abteilungen") renderAbteilungen(wrap);
+}
+
+// =====================================================================
+//  Abteilung: Bestellen
+// =====================================================================
+function renderBestellen(wrap){
+  const aktive = state.artikel.filter(a=>a.aktiv);
+  if (aktive.length===0){
+    wrap.append(h("div",{class:"empty"},
+      h("div",{class:"big",text:"Noch keine Artikel vorhanden."}),
+      h("div",{class:"muted",text:"Die Leitung legt zuerst Artikel an."})));
+    return;
+  }
+
+  const gruppen = [...state.gruppen];
+  const ohneGruppe = aktive.filter(a=>!a.gruppe_id);
+
+  function stepRow(a){
+    const val = state.cart[a.id] || 0;
+    const qty = h("input",{class:"qty mono",type:"number",min:"0",step:"1",value:String(val),
+      inputmode:"numeric"});
+    const setVal=(n)=>{
+      n=Math.max(0, Math.floor(n||0));
+      state.cart[a.id]=n; qty.value=String(n); updateSummary();
+    };
+    qty.addEventListener("input",()=>setVal(parseInt(qty.value,10)));
+    return h("div",{class:"art"},
+      h("div",{class:"name"}, a.name),
+      h("div",{class:"stepper"},
+        h("button",{type:"button",text:"−",onclick:()=>setVal((state.cart[a.id]||0)-1)}),
+        qty,
+        h("button",{type:"button",text:"+",onclick:()=>setVal((state.cart[a.id]||0)+1)})
+      )
+    );
+  }
+
+  for (const g of gruppen){
+    const items = aktive.filter(a=>a.gruppe_id===g.id);
+    if (items.length===0) continue;
+    wrap.append(h("div",{class:"group-h"}, h("h3",{text:g.name}), h("span",{class:"count",text:items.length+" Artikel"})));
+    items.forEach(a=>wrap.append(stepRow(a)));
+  }
+  if (ohneGruppe.length){
+    wrap.append(h("div",{class:"group-h"}, h("h3",{text:"Ohne Gruppe"})));
+    ohneGruppe.forEach(a=>wrap.append(stepRow(a)));
+  }
+
+  // Summenleiste
+  const info = h("div",{class:"info"});
+  const sendBtn = h("button",{class:"btn",text:"Bestellung senden"});
+  const bar = h("div",{class:"summary"}, info, sendBtn);
+  document.body.append(bar);
+
+  function updateSummary(){
+    const eintr = Object.values(state.cart).filter(n=>n>0);
+    const posn = eintr.length;
+    const summe = eintr.reduce((s,n)=>s+n,0);
+    clear(info);
+    info.append(h("span",{}, h("b",{text:String(posn)}), posn===1?" Position":" Positionen",
+      "  ·  ", h("b",{text:String(summe)}), " Stück gesamt"));
+    sendBtn.disabled = posn===0;
+    sendBtn.style.opacity = posn===0 ? .5 : 1;
+  }
+  updateSummary();
+
+  sendBtn.addEventListener("click", async ()=>{
+    const positionen = Object.entries(state.cart)
+      .filter(([,n])=>n>0).map(([artikel_id,menge])=>({artikel_id, menge}));
+    if (positionen.length===0) return;
+    sendBtn.disabled=true; sendBtn.textContent="Senden…";
+    const { data, error } = await sb.rpc("bestellung_anlegen", { positionen });
+    sendBtn.disabled=false; sendBtn.textContent="Bestellung senden";
+    if (error){ toast("Konnte nicht senden: "+error.message,"err"); return; }
+    bar.remove();
+    state.cart={};
+    toast("Bestellung "+ (data?.bestellnr||"") + " gesendet.","ok");
+    await ladeDaten();
+    state.tab="meine"; renderApp();
+  });
+
+  // Summenleiste entfernen, wenn Tab gewechselt wird
+  const obs = new MutationObserver(()=>{
+    if (!document.body.contains(wrap)){ bar.remove(); obs.disconnect(); }
+  });
+  obs.observe(document.body,{childList:true,subtree:true});
+}
+
+// =====================================================================
+//  Bestellungen anzeigen  (meineNur = nur eigene -> Abteilungsansicht)
+// =====================================================================
+function renderBestellungen(wrap, meineNur){
+  const rolle = state.konto.rolle;
+  const darfLoeschen = rolle==="admin" || rolle==="leitung";
+  const zeigeAbteilung = !meineNur; // in "alle" auch die Abteilung zeigen
+
+  let liste = state.bestellungen;
+
+  if (liste.length===0){
+    wrap.append(h("div",{class:"empty"},
+      h("div",{class:"big",text: meineNur ? "Noch keine Bestellungen." : "Es sind noch keine Bestellungen da."}),
+      h("div",{class:"muted",text: meineNur ? "Wechsle zu „Bestellen", um eine anzulegen." : ""})));
+    return;
+  }
+
+  // Filter (nur in "alle")
+  if (!meineNur){
+    const abteilungen = [...new Set(liste.map(b=>b.abteilung?.kuerzel).filter(Boolean))];
+    const sel = h("select",{style:"max-width:220px"},
+      h("option",{value:"",text:"Alle Abteilungen"}),
+      ...abteilungen.map(k=>h("option",{value:k,text:k}))
+    );
+    sel.addEventListener("change",()=>{ renderBestellungenListe(); });
+    wrap.append(h("div",{class:"row",style:"margin-bottom:1rem"},
+      h("div",{class:"muted",style:"font-size:13px",text:liste.length+" Bestellungen"}),
+      h("div",{style:"margin-left:auto;max-width:220px;width:100%"}, sel)
+    ));
+    var filterSel = sel;
+  }
+
+  const container = h("div",{});
+  wrap.append(container);
+  renderBestellungenListe();
+
+  function renderBestellungenListe(){
+    clear(container);
+    let daten = state.bestellungen;
+    if (!meineNur && filterSel && filterSel.value){
+      daten = daten.filter(b=>b.abteilung?.kuerzel===filterSel.value);
+    }
+    if (daten.length===0){
+      container.append(h("div",{class:"empty"}, h("div",{class:"muted",text:"Keine Treffer."})));
+      return;
+    }
+    for (const b of daten){
+      const top = h("div",{class:"ticket-top"},
+        h("span",{class:"ticket-nr",text:b.bestellnr}),
+        zeigeAbteilung && b.abteilung ? h("span",{class:"muted",style:"font-size:13px",text:b.abteilung.name}) : null,
+        h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
+      );
+      const body = h("div",{class:"ticket-body"});
+      (b.positionen||[]).forEach(p=>{
+        body.append(h("div",{class:"pos"},
+          h("span",{class:"m",text:String(p.menge)}),
+          h("span",{class:"n",text:p.artikel?.name || "(Artikel entfernt)"})
+        ));
+      });
+      const actions = h("div",{class:"ticket-actions"},
+        h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeBestellung(b)}),
+        darfLoeschen ? h("button",{class:"btn-danger btn-sm",text:"Löschen",
+          onclick:()=>loescheBestellung(b)}) : null
+      );
+      container.append(h("div",{class:"ticket"}, top, body, actions));
+    }
+  }
+
+  async function loescheBestellung(b){
+    if (!confirm("Bestellung "+b.bestellnr+" wirklich löschen?")) return;
+    const { error } = await sb.from("bestellungen").delete().eq("id", b.id);
+    if (error){ toast("Löschen fehlgeschlagen: "+error.message,"err"); return; }
+    toast("Bestellung "+b.bestellnr+" gelöscht.","ok");
+    await ladeDaten(); renderApp();
+  }
+}
+
+function druckeBestellung(b){
+  const area = document.getElementById("print-area");
+  clear(area);
+  const tbl = h("table",{},
+    ...(b.positionen||[]).map(p=>h("tr",{},
+      h("td",{class:"pm",text:String(p.menge)}),
+      h("td",{text:p.artikel?.name || "(Artikel entfernt)"})
+    ))
+  );
+  area.append(
+    h("h2",{text:"Auhof — Bestellung"}),
+    h("div",{class:"p-nr",style:"margin-top:6px;font-size:18px",text:b.bestellnr}),
+    h("div",{style:"margin-top:4px",text:(b.abteilung?.name? "Abteilung: "+b.abteilung.name : "")}),
+    h("div",{style:"color:#555",text:"Datum: "+fmtDatum(b.erstellt_am)}),
+    tbl
+  );
+  window.print();
+}
+
+// =====================================================================
+//  Artikel-Verwaltung (Admin/Leitung)
+// =====================================================================
+function renderArtikel(wrap){
+  // Formular: neuen Artikel anlegen
+  const nameI = h("input",{type:"text",placeholder:"Artikelname"});
+  const grpSel = h("select",{},
+    h("option",{value:"",text:"— Gruppe wählen —"}),
+    ...state.gruppen.map(g=>h("option",{value:g.id,text:g.name}))
+  );
+  const addBtn = h("button",{class:"btn",text:"Artikel anlegen"});
+  addBtn.addEventListener("click", async ()=>{
+    const name=nameI.value.trim();
+    if (!name) return toast("Name fehlt.","err");
+    if (!grpSel.value) return toast("Bitte eine Gruppe wählen.","err");
+    addBtn.disabled=true;
+    const { error } = await sb.from("artikel").insert({name, gruppe_id:grpSel.value, aktiv:true});
+    addBtn.disabled=false;
+    if (error){ toast("Fehler: "+error.message,"err"); return; }
+    nameI.value=""; toast("Artikel angelegt.","ok");
+    await ladeDaten(); renderApp();
+  });
+
+  wrap.append(h("div",{class:"card"},
+    h("h3",{text:"Neuer Artikel",style:"margin-bottom:.8rem"}),
+    h("div",{class:"grid2"},
+      h("div",{}, h("label",{text:"Name"}), nameI),
+      h("div",{}, h("label",{text:"Gruppe"}), grpSel)
+    ),
+    h("div",{style:"margin-top:.8rem"}, addBtn)
+  ));
+
+  if (state.gruppen.length===0){
+    wrap.append(h("div",{class:"empty"}, h("div",{class:"muted",
+      text:"Es gibt noch keine Gruppen — lege zuerst unter „Gruppen" welche an."})));
+  }
+
+  // Liste je Gruppe
+  const gruppenMitOhne = [...state.gruppen, {id:null,name:"Ohne Gruppe"}];
+  for (const g of gruppenMitOhne){
+    const items = state.artikel.filter(a=>a.gruppe_id===g.id);
+    if (items.length===0) continue;
+    wrap.append(h("div",{class:"group-h"}, h("h3",{text:g.name}), h("span",{class:"count",text:items.length+" Artikel"})));
+    items.forEach(a=>wrap.append(artikelZeile(a)));
+  }
+}
+
+function artikelZeile(a){
+  const zeile = h("div",{class:"art"+(a.aktiv?"":" inactive")});
+  const nameSpan = h("div",{class:"name"}, a.name,
+    a.aktiv?null:h("small",{text:"inaktiv"}));
+
+  const toggle = h("button",{class:"btn-ghost btn-sm",text:a.aktiv?"Ausblenden":"Aktiv setzen",
+    onclick:async ()=>{
+      const { error } = await sb.from("artikel").update({aktiv:!a.aktiv}).eq("id",a.id);
+      if (error){ toast("Fehler: "+error.message,"err"); return; }
+      await ladeDaten(); renderApp();
+    }});
+  const editBtn = h("button",{class:"btn-ghost btn-sm",text:"Bearbeiten",
+    onclick:()=>bearbeiteArtikel(zeile, a)});
+  const delBtn = h("button",{class:"btn-danger btn-sm",text:"Löschen",
+    onclick:async ()=>{
+      if (!confirm('Artikel „'+a.name+'" löschen?')) return;
+      const { error } = await sb.from("artikel").delete().eq("id",a.id);
+      if (error){ toast("Fehler: "+error.message,"err"); return; }
+      toast("Artikel gelöscht.","ok"); await ladeDaten(); renderApp();
+    }});
+
+  zeile.append(nameSpan, h("div",{class:"row"}, toggle, editBtn, delBtn));
+  return zeile;
+}
+
+function bearbeiteArtikel(zeile, a){
+  clear(zeile);
+  const nameI = h("input",{type:"text",value:a.name,style:"flex:1;min-width:140px"});
+  const grpSel = h("select",{style:"max-width:180px"},
+    h("option",{value:"",text:"Ohne Gruppe"}),
+    ...state.gruppen.map(g=>h("option",{value:g.id,text:g.name,...(g.id===a.gruppe_id?{selected:"selected"}:{})}))
+  );
+  const save = h("button",{class:"btn btn-sm",text:"Speichern",onclick:async ()=>{
+    const name=nameI.value.trim(); if(!name) return toast("Name fehlt.","err");
+    const { error } = await sb.from("artikel").update({name, gruppe_id:grpSel.value||null}).eq("id",a.id);
+    if (error){ toast("Fehler: "+error.message,"err"); return; }
+    toast("Gespeichert.","ok"); await ladeDaten(); renderApp();
+  }});
+  const cancel = h("button",{class:"btn-ghost btn-sm",text:"Abbrechen",onclick:()=>renderApp()});
+  zeile.append(nameI, grpSel, save, cancel);
+  zeile.classList.remove("inactive");
+  nameI.focus();
+}
+
+// =====================================================================
+//  Gruppen-Verwaltung (Admin/Leitung)
+// =====================================================================
+function renderGruppen(wrap){
+  const nameI = h("input",{type:"text",placeholder:"Gruppenname"});
+  const addBtn = h("button",{class:"btn",text:"Gruppe anlegen",onclick:async ()=>{
+    const name=nameI.value.trim(); if(!name) return toast("Name fehlt.","err");
+    const sort=(state.gruppen.length? Math.max(...state.gruppen.map(g=>g.sortierung||0)) : 0)+1;
+    const { error } = await sb.from("gruppen").insert({name, sortierung:sort});
+    if (error){ toast("Fehler (Name evtl. schon vergeben): "+error.message,"err"); return; }
+    nameI.value=""; toast("Gruppe angelegt.","ok"); await ladeDaten(); renderApp();
+  }});
+
+  wrap.append(h("div",{class:"card"},
+    h("h3",{text:"Neue Gruppe",style:"margin-bottom:.8rem"}),
+    h("div",{class:"row"}, h("div",{style:"flex:1"}, nameI), addBtn)
+  ));
+
+  if (state.gruppen.length===0){
+    wrap.append(h("div",{class:"empty"}, h("div",{class:"muted",text:"Noch keine Gruppen."})));
+    return;
+  }
+
+  const tbl = h("table",{class:"list"},
+    h("thead",{}, h("tr",{}, h("th",{text:"Gruppe"}), h("th",{text:"Artikel"}), h("th",{text:""}))),
+  );
+  const tbody = h("tbody",{});
+  for (const g of state.gruppen){
+    const anzahl = state.artikel.filter(a=>a.gruppe_id===g.id).length;
+    const nameCell = h("td",{}, g.name);
+    const actions = h("td",{style:"text-align:right"},
+      h("div",{class:"row",style:"justify-content:flex-end"},
+        h("button",{class:"btn-ghost btn-sm",text:"Umbenennen",onclick:()=>{
+          clear(nameCell);
+          const inp=h("input",{type:"text",value:g.name,style:"max-width:200px"});
+          const ok=h("button",{class:"btn btn-sm",text:"OK",onclick:async ()=>{
+            const nn=inp.value.trim(); if(!nn) return;
+            const { error } = await sb.from("gruppen").update({name:nn}).eq("id",g.id);
+            if (error){ toast("Fehler: "+error.message,"err"); return; }
+            await ladeDaten(); renderApp();
+          }});
+          nameCell.append(h("div",{class:"row"},inp,ok)); inp.focus();
+        }}),
+        h("button",{class:"btn-danger btn-sm",text:"Löschen",onclick:async ()=>{
+          const warn = anzahl>0
+            ? 'Gruppe „'+g.name+'" löschen? ACHTUNG: '+anzahl+' Artikel darin werden mitgelöscht!'
+            : 'Gruppe „'+g.name+'" löschen?';
+          if (!confirm(warn)) return;
+          const { error } = await sb.from("gruppen").delete().eq("id",g.id);
+          if (error){ toast("Fehler: "+error.message,"err"); return; }
+          toast("Gruppe gelöscht.","ok"); await ladeDaten(); renderApp();
+        }})
+      )
+    );
+    tbody.append(h("tr",{}, nameCell, h("td",{class:"mono",text:String(anzahl)}), actions));
+  }
+  tbl.append(tbody);
+  wrap.append(h("div",{class:"card",style:"padding:.6rem"}, tbl));
+}
+
+// =====================================================================
+//  Abteilungen & Passwörter (nur Admin)
+// =====================================================================
+async function rufeFunktion(body){
+  const { data, error } = await sb.functions.invoke(FUNKTION, { body });
+  if (error){
+    let msg = error.message;
+    try { const d = await error.context.json(); if (d?.error) msg = d.error; } catch {}
+    return { error: msg };
+  }
+  return { data };
+}
+
+function renderAbteilungen(wrap){
+  // --- Neue Abteilung anlegen ---
+  const nI = h("input",{type:"text",placeholder:"z.B. Seegasse"});
+  const kI = h("input",{type:"text",placeholder:"z.B. SEE"});
+  const pI = h("input",{type:"text",placeholder:"mind. 8 Zeichen"});
+  const addBtn = h("button",{class:"btn",text:"Abteilung anlegen",onclick:async ()=>{
+    const name=nI.value.trim(), kuerzel=kI.value.trim(), passwort=pI.value;
+    if (!/^[A-Za-z0-9]+$/.test(name)) return toast("Name: nur Buchstaben/Zahlen, keine Leerzeichen.","err");
+    if (!kuerzel) return toast("Kürzel fehlt.","err");
+    if (passwort.length<8) return toast("Passwort mind. 8 Zeichen.","err");
+    addBtn.disabled=true; addBtn.textContent="Anlegen…";
+    const { data, error } = await rufeFunktion({aktion:"abteilung_anlegen", name, kuerzel, passwort});
+    addBtn.disabled=false; addBtn.textContent="Abteilung anlegen";
+    if (error){ toast(error,"err"); return; }
+    nI.value=""; kI.value=""; pI.value="";
+    toast("Abteilung „"+name+"" angelegt.","ok");
+    await ladeDaten(); renderApp();
+  }});
+
+  wrap.append(h("div",{class:"card"},
+    h("h3",{text:"Neue Abteilung",style:"margin-bottom:.8rem"}),
+    h("div",{class:"grid2"},
+      h("div",{}, h("label",{text:"Name (Login)"}), nI),
+      h("div",{}, h("label",{text:"Kürzel (für Bestellnr.)"}), kI)
+    ),
+    h("div",{style:"margin-top:.7rem"}, h("label",{text:"Startpasswort"}), pI),
+    h("div",{style:"margin-top:.8rem"}, addBtn)
+  ));
+
+  // --- Liste bestehender Abteilungen ---
+  const abt = state.konten.filter(k=>k.rolle==="abteilung");
+  const tbody = h("tbody",{});
+  abt.forEach(k=>tbody.append(h("tr",{},
+    h("td",{text:k.name}),
+    h("td",{class:"mono",text:k.kuerzel||"—"})
+  )));
+  wrap.append(h("div",{class:"card",style:"padding:.6rem"},
+    h("table",{class:"list"},
+      h("thead",{}, h("tr",{}, h("th",{text:"Abteilung"}), h("th",{text:"Kürzel"}))),
+      tbody
+    ),
+    abt.length===0 ? h("div",{class:"empty"},h("div",{class:"muted",text:"Noch keine Abteilungen."})) : null
+  ));
+
+  // --- Passwort setzen (jedes Konto) ---
+  const zielSel = h("select",{},
+    ...state.konten.map(k=>h("option",{value:k.name,text:k.name+" ("+(ROLLE_LABEL[k.rolle]||k.rolle)+")"}))
+  );
+  const npI = h("input",{type:"text",placeholder:"neues Passwort, mind. 8 Zeichen"});
+  const pwBtn = h("button",{class:"btn",text:"Passwort setzen",onclick:async ()=>{
+    if (npI.value.length<8) return toast("Passwort mind. 8 Zeichen.","err");
+    pwBtn.disabled=true; pwBtn.textContent="Setzen…";
+    const { error } = await rufeFunktion({aktion:"passwort_setzen", name:zielSel.value, passwort:npI.value});
+    pwBtn.disabled=false; pwBtn.textContent="Passwort setzen";
+    if (error){ toast(error,"err"); return; }
+    npI.value=""; toast("Passwort für „"+zielSel.value+"" gesetzt.","ok");
+  }});
+  wrap.append(h("div",{class:"card"},
+    h("h3",{text:"Passwort setzen / zurücksetzen",style:"margin-bottom:.8rem"}),
+    h("div",{class:"grid2"},
+      h("div",{}, h("label",{text:"Konto"}), zielSel),
+      h("div",{}, h("label",{text:"Neues Passwort"}), npI)
+    ),
+    h("div",{style:"margin-top:.8rem"}, pwBtn)
+  ));
+}
+
+// =====================================================================
+//  Start
+// =====================================================================
+(async ()=>{
+  const { data:{ session } } = await sb.auth.getSession();
+  if (session){
+    const res = await ladeKontoUndStarten();
+    if (res.ok) renderApp(); else renderLogin();
+  } else {
+    renderLogin();
+  }
+})();
+</script>
+</body>
+</html>
