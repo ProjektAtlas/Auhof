@@ -202,6 +202,17 @@ function fmtDatum(iso){
        + " " + d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"});
 }
 
+// ---- Bestellschluss (tägliche Uhrzeit, Zeitzone Europe/Zurich) ----
+function hhmm(t){ return t ? String(t).slice(0,5) : ""; }      // "10:00:00" -> "10:00"
+function jetztZuerichHHMM(){
+  return new Date().toLocaleTimeString("en-GB",
+    { timeZone:"Europe/Zurich", hour:"2-digit", minute:"2-digit", hour12:false });
+}
+function istNachBestellschluss(schluss){
+  if (!schluss) return false;                                  // kein Bestellschluss = immer offen
+  return jetztZuerichHHMM() > hhmm(schluss);                   // "HH:MM" nullgepolstert -> Stringvergleich = Zeitvergleich
+}
+
 // =====================================================================
 //  Auth
 // =====================================================================
@@ -216,7 +227,7 @@ async function ladeKontoUndStarten(){
   const { data:{ user } } = await sb.auth.getUser();
   if (!user) return { error:"Nicht angemeldet." };
   const { data:konto, error } = await sb.from("konten")
-    .select("id,name,rolle,kuerzel").eq("id", user.id).single();
+    .select("id,name,rolle,kuerzel,bestellschluss").eq("id", user.id).single();
   if (error || !konto){
     await sb.auth.signOut();
     return { error:"Für dieses Konto ist noch kein Zugang eingerichtet." };
@@ -254,7 +265,7 @@ async function ladeDaten(){
   }
 
   if (r==="admin" || r==="leitung"){
-    const k = await sb.from("konten").select("id,name,rolle,kuerzel").order("rolle").order("name");
+    const k = await sb.from("konten").select("id,name,rolle,kuerzel,bestellschluss").order("rolle").order("name");
     state.konten = k.data || [];
   }
 }
@@ -377,6 +388,23 @@ function renderBestellen(wrap){
   const gruppen = [...state.gruppen];
   const ohneGruppe = aktive.filter(a=>!a.gruppe_id);
 
+  // Bestellschluss-Hinweis / -Sperre
+  const schluss = state.konto.bestellschluss;
+  if (schluss){
+    const zu = istNachBestellschluss(schluss);
+    wrap.append(h("div",{class:"card",
+      style:"padding:.7rem .9rem;margin-bottom:1rem;"+(zu
+        ? "border-color:#5a2f34;background:#2c1c1e"
+        : "")},
+      zu
+        ? h("div",{style:"color:#f0c2c7"},
+            h("b",{text:"Bestellschluss "+hhmm(schluss)+" Uhr überschritten."}),
+            " Für heute sind keine Bestellungen mehr möglich.")
+        : h("div",{class:"muted"}, "Bestellschluss heute um ",
+            h("b",{style:"color:var(--ink)",text:hhmm(schluss)+" Uhr"}), ".")
+    ));
+  }
+
   function stepRow(a){
     const val = state.cart[a.id] || 0;
     const qty = h("input",{class:"qty mono",type:"number",min:"0",step:"1",value:String(val),
@@ -420,12 +448,18 @@ function renderBestellen(wrap){
     clear(info);
     info.append(h("span",{}, h("b",{text:String(posn)}), posn===1?" Position":" Positionen",
       "  ·  ", h("b",{text:String(summe)}), " Stück gesamt"));
-    sendBtn.disabled = posn===0;
-    sendBtn.style.opacity = posn===0 ? .5 : 1;
+    const zu = istNachBestellschluss(state.konto.bestellschluss);
+    sendBtn.disabled = posn===0 || zu;
+    sendBtn.style.opacity = (posn===0 || zu) ? .5 : 1;
   }
   updateSummary();
 
   sendBtn.addEventListener("click", async ()=>{
+    if (istNachBestellschluss(state.konto.bestellschluss)){
+      toast("Bestellschluss überschritten – heute nicht mehr möglich.","err");
+      updateSummary();
+      return;
+    }
     const positionen = Object.entries(state.cart)
       .filter(([,n])=>n>0).map(([artikel_id,menge])=>({artikel_id, menge}));
     if (positionen.length===0) return;
@@ -763,19 +797,35 @@ function renderAbteilungen(wrap){
     h("div",{style:"margin-top:.8rem"}, addBtn)
   ));
 
-  // --- Liste bestehender Abteilungen ---
+  // --- Liste bestehender Abteilungen (inkl. Bestellschluss) ---
   const abt = state.konten.filter(k=>k.rolle==="abteilung");
   const tbody = h("tbody",{});
-  abt.forEach(k=>tbody.append(h("tr",{},
-    h("td",{text:k.name}),
-    h("td",{class:"mono",text:k.kuerzel||"—"})
-  )));
+  abt.forEach(k=>{
+    const zeitI = h("input",{type:"time",value:hhmm(k.bestellschluss),style:"max-width:130px"});
+    const saveBtn = h("button",{class:"btn btn-sm",text:"Speichern",onclick:async ()=>{
+      saveBtn.disabled=true; saveBtn.textContent="…";
+      const { error } = await rufeFunktion({aktion:"bestellschluss_setzen", id:k.id, bestellschluss: zeitI.value || null});
+      saveBtn.disabled=false; saveBtn.textContent="Speichern";
+      if (error){ toast(error,"err"); return; }
+      toast(zeitI.value
+        ? ('Bestellschluss für „'+k.name+'“: '+zeitI.value+' Uhr.')
+        : ('Bestellschluss für „'+k.name+'“ entfernt.'),"ok");
+      await ladeDaten(); renderApp();
+    }});
+    tbody.append(h("tr",{},
+      h("td",{text:k.name}),
+      h("td",{class:"mono",text:k.kuerzel||"—"}),
+      h("td",{}, h("div",{class:"row"}, zeitI, saveBtn))
+    ));
+  });
   wrap.append(h("div",{class:"card",style:"padding:.6rem"},
     h("table",{class:"list"},
-      h("thead",{}, h("tr",{}, h("th",{text:"Abteilung"}), h("th",{text:"Kürzel"}))),
+      h("thead",{}, h("tr",{}, h("th",{text:"Abteilung"}), h("th",{text:"Kürzel"}), h("th",{text:"Bestellschluss"}))),
       tbody
     ),
-    abt.length===0 ? h("div",{class:"empty"},h("div",{class:"muted",text:"Noch keine Abteilungen."})) : null
+    abt.length===0 ? h("div",{class:"empty"},h("div",{class:"muted",text:"Noch keine Abteilungen."})) : null,
+    h("div",{class:"muted",style:"font-size:12px;padding:.5rem .5rem 0",
+      text:"Leeres Feld = kein Bestellschluss (immer offen). Die Zeit gilt täglich, Zeitzone Europe/Zurich."})
   ));
 
   // --- Passwort setzen (jedes Konto) ---
