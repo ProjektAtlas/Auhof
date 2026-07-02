@@ -60,6 +60,7 @@
   .tab{background:transparent; color:var(--dim); border:none; border-bottom:2px solid transparent;
     border-radius:0; padding:.6rem .7rem; font-weight:500; white-space:nowrap}
   .tab.active{color:var(--ink); border-bottom-color:var(--gold)}
+  .subtabs{display:flex; gap:.3rem; margin:0 0 1.3rem; border-bottom:1px solid var(--line); overflow-x:auto}
   .wrap{max-width:900px; margin:0 auto; padding:1.4rem 1.1rem 5rem}
 
   .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:1.1rem}
@@ -159,7 +160,8 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 // ---- App-Zustand ----
 const state = {
   konto:null,            // { id, name, rolle, kuerzel }
-  tab:null,
+  tab:null, subtab:null, // oberste Ebene + Untertab (Verwaltung)
+  artikelFilter:"",      // Gruppen-Filter in „Artikel erfassen" ("" = alle)
   gruppen:[], artikel:[], bestellungen:[], konten:[],
   cart:{},               // { artikel_id: menge }
 };
@@ -226,7 +228,7 @@ async function ladeKontoUndStarten(){
 
 async function logout(){
   await sb.auth.signOut();
-  state.konto=null; state.cart={}; state.tab=null;
+  state.konto=null; state.cart={}; state.tab=null; state.subtab=null;
   renderLogin();
 }
 
@@ -260,8 +262,8 @@ async function ladeDaten(){
 function tabsFor(rolle){
   if (rolle==="abteilung") return [["bestellen","Bestellen"],["meine","Meine Bestellungen"]];
   if (rolle==="konditorei") return [["alle","Bestellungen"]];
-  if (rolle==="leitung")   return [["alle","Bestellungen"],["artikel","Artikel"],["gruppen","Gruppen"],["abteilungen","Abteilungen"]];
-  if (rolle==="admin")     return [["alle","Bestellungen"],["artikel","Artikel"],["gruppen","Gruppen"],["abteilungen","Abteilungen"]];
+  if (rolle==="leitung")   return [["alle","Bestellungen"],["verwaltung", ROLLE_LABEL.leitung]];
+  if (rolle==="admin")     return [["alle","Bestellungen"],["verwaltung", ROLLE_LABEL.admin]];
   return [];
 }
 
@@ -328,12 +330,36 @@ function renderApp(){
   app.append(topbar, tabs, wrap);
 
   const view = state.tab;
-  if (view==="bestellen")      renderBestellen(wrap);
-  else if (view==="meine")     renderBestellungen(wrap, true);
-  else if (view==="alle")      renderBestellungen(wrap, false);
-  else if (view==="artikel")   renderArtikel(wrap);
-  else if (view==="gruppen")   renderGruppen(wrap);
-  else if (view==="abteilungen") renderAbteilungen(wrap);
+  if (view==="bestellen")       renderBestellen(wrap);
+  else if (view==="meine")      renderBestellungen(wrap, true);
+  else if (view==="alle")       renderBestellungen(wrap, false);
+  else if (view==="verwaltung") renderVerwaltung(wrap);
+}
+
+// =====================================================================
+//  Verwaltung (Admin/Leitung): Untertabs
+// =====================================================================
+function renderVerwaltung(wrap){
+  const subDefs = [
+    ["gruppen","Gruppe erstellen"],
+    ["artikel","Artikel erfassen"],
+    ["abteilungen","Abteilungen"],
+  ];
+  if (!state.subtab || !subDefs.find(s=>s[0]===state.subtab)) state.subtab = subDefs[0][0];
+
+  wrap.append(h("div",{class:"subtabs"},
+    ...subDefs.map(([id,label])=>
+      h("button",{class:"tab"+(state.subtab===id?" active":""),text:label,
+        onclick:()=>{ state.subtab=id; renderApp(); }})
+    )
+  ));
+
+  const inner = h("div",{});
+  wrap.append(inner);
+
+  if (state.subtab==="gruppen")          renderGruppen(inner);
+  else if (state.subtab==="artikel")     renderArtikel(inner);
+  else if (state.subtab==="abteilungen") renderAbteilungen(inner);
 }
 
 // =====================================================================
@@ -551,16 +577,43 @@ function renderArtikel(wrap){
 
   if (state.gruppen.length===0){
     wrap.append(h("div",{class:"empty"}, h("div",{class:"muted",
-      text:"Es gibt noch keine Gruppen — lege zuerst unter „Gruppen“ welche an."})));
+      text:"Es gibt noch keine Gruppen — lege zuerst unter „Gruppe erstellen“ welche an."})));
   }
 
-  // Liste je Gruppe
-  const gruppenMitOhne = [...state.gruppen, {id:null,name:"Ohne Gruppe"}];
-  for (const g of gruppenMitOhne){
-    const items = state.artikel.filter(a=>a.gruppe_id===g.id);
-    if (items.length===0) continue;
-    wrap.append(h("div",{class:"group-h"}, h("h3",{text:g.name}), h("span",{class:"count",text:items.length+" Artikel"})));
-    items.forEach(a=>wrap.append(artikelZeile(a)));
+  // --- Filter für bestehende Artikel ---
+  const filterSel = h("select",{style:"max-width:220px"},
+    h("option",{value:"",text:"Alle Gruppen"}),
+    ...state.gruppen.map(g=>h("option",{value:String(g.id),text:g.name}))
+  );
+  filterSel.value = state.artikelFilter || "";
+  filterSel.addEventListener("change",()=>{ state.artikelFilter = filterSel.value; zeichneListe(); });
+
+  wrap.append(h("div",{class:"row",style:"margin:1.2rem 0 .2rem"},
+    h("div",{class:"muted",style:"font-size:13px",text:"Bestehende Artikel"}),
+    h("div",{style:"margin-left:auto;max-width:220px;width:100%"}, filterSel)
+  ));
+
+  const listeBox = h("div",{});
+  wrap.append(listeBox);
+  zeichneListe();
+
+  function zeichneListe(){
+    clear(listeBox);
+    const f = state.artikelFilter || "";
+    const gruppen = f ? state.gruppen.filter(g=>String(g.id)===f) : state.gruppen;
+
+    let gezeigt = 0;
+    for (const g of gruppen){
+      const items = state.artikel.filter(a=>a.gruppe_id===g.id);
+      if (items.length===0) continue;
+      gezeigt += items.length;
+      listeBox.append(h("div",{class:"group-h"}, h("h3",{text:g.name}), h("span",{class:"count",text:items.length+" Artikel"})));
+      items.forEach(a=>listeBox.append(artikelZeile(a)));
+    }
+    if (gezeigt===0){
+      listeBox.append(h("div",{class:"empty"},
+        h("div",{class:"muted",text: f ? "Keine Artikel in dieser Gruppe." : "Noch keine Artikel angelegt."})));
+    }
   }
 }
 
