@@ -333,7 +333,7 @@ async function ladeDaten(){
   // Kundenbestellungen (RLS: eigene bzw. für Konditorei/Leitung/Admin alle)
   const kb = await sb.from("kundenbestellungen")
     .select(`id,bestellnr,jahr,monat,laufnr,erstellt_am,
-             vorname,nachname,email,telefon,bezahlart,modus,
+             vorname,nachname,email,telefon,bezahlart,bezahlt,modus,
              rechnungsadresse,lieferadresse,liefertag,lieferzeit,freitext,
              abteilung_id,abhol_abteilung_id,
              abteilung:konten!kundenbestellungen_abteilung_id_fkey(name,kuerzel,sammelbestellung)`)
@@ -624,6 +624,9 @@ function renderBestellungen(wrap, meineNur){
   const darfDrucken    = rolle==="admin" || rolle==="leitung" || rolle==="konditorei";
   const darfAendernAbt = rolle==="abteilung" && meineNur;   // eigene ändern
   const zeigeAbteilung = !meineNur;                          // in "alle" die Abteilung zeigen
+  // Bezahlstatus umschalten: eigene Abteilung (nur eigene) oder Konditorei/Leitung/Admin (alle)
+  const darfBezahltSetzen = (rolle==="abteilung" && meineNur)
+    || rolle==="konditorei" || rolle==="leitung" || rolle==="admin";
 
   if (state.listenModus!=="kunde") state.listenModus = "abteilung";
 
@@ -752,6 +755,24 @@ function renderBestellungen(wrap, meineNur){
     }
   }
 
+  // ---- Bezahlstatus umschalten (nur „Vor Ort"; nicht an Bestellschluss gebunden) ----
+  function bezahltToggleBtn(b){
+    const btn = h("button",{class:"btn-sm "+(b.bezahlt?"btn-ghost":"btn"),
+      text: b.bezahlt ? "Als offen markieren" : "Als bezahlt markieren"});
+    btn.addEventListener("click", async ()=>{
+      const ziel = !b.bezahlt;
+      btn.disabled=true;
+      const { error } = await sb.rpc("kundenbestellung_bezahlt_setzen",
+        { p_bestellung_id:b.id, p_bezahlt:ziel });
+      btn.disabled=false;
+      if (error){ toast("Bezahlstatus konnte nicht geändert werden: "+error.message,"err"); return; }
+      b.bezahlt = ziel;
+      toast(ziel ? "Als bezahlt markiert." : "Als offen markiert.","ok");
+      renderApp();
+    });
+    return btn;
+  }
+
   // ---- Liste: Kundenbestellungen ----
   function zeichneKundeListe(container, daten, leerText){
     clear(container);
@@ -778,6 +799,7 @@ function renderBestellungen(wrap, meineNur){
 
       const zu = istNachBestellschluss(state.konto.bestellschluss);
       const actions = h("div",{class:"ticket-actions"},
+        (b.bezahlart==="vor_ort" && darfBezahltSetzen) ? bezahltToggleBtn(b) : null,
         darfAendernAbt ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
           ...(zu ? {disabled:"disabled", style:"opacity:.5"} : {}),
           onclick:()=>starteKundeAendern(b)}) : null,
@@ -912,10 +934,11 @@ function kundeInfoPaare(b){
   paare.push(["E-Mail", b.email||""]);
   if (b.telefon) paare.push(["Telefon", b.telefon]);
   paare.push(["Bezahlart", b.bezahlart==="rechnung" ? "Auf Rechnung" : "Vor Ort"]);
+  if (b.bezahlart==="vor_ort") paare.push(["Bezahlt", b.bezahlt ? "Ja" : "Nein"]);
   if (b.modus==="abholung"){
     const an = abteilungName(b.abhol_abteilung_id);
     paare.push(["Abwicklung", "Abholung" + (an ? " – "+an : "")]);
-    paare.push(["Abholdatum", fmtTag(b.liefertag)]);
+    paare.push(["Abholtermin", fmtTag(b.liefertag) + (b.lieferzeit ? ", "+hhmm(b.lieferzeit)+" Uhr" : "")]);
   } else {
     paare.push(["Abwicklung", "Lieferung"]);
     paare.push(["Lieferadresse", b.lieferadresse||""]);
@@ -970,11 +993,11 @@ function renderKundeFormular(wrap, editB=null){
     rechnungsadresse: editB.rechnungsadresse||"", lieferadresse: editB.lieferadresse||"",
     liefertag: editB.liefertag ? String(editB.liefertag).slice(0,10) : "",
     lieferzeit: editB.lieferzeit ? hhmm(editB.lieferzeit) : "",
-    freitext: editB.freitext||""
+    freitext: editB.freitext||"", bezahlt: !!editB.bezahlt
   } : {
     vorname:"", nachname:"", email:"", telefon:"", bezahlart:"vor_ort",
     modus:"abholung", abhol_abteilung_id:"", rechnungsadresse:"", lieferadresse:"",
-    liefertag:"", lieferzeit:"", freitext:""
+    liefertag:"", lieferzeit:"", freitext:"", bezahlt:false
   };
 
   // Kopf im Ändern-Modus
@@ -1032,13 +1055,18 @@ function renderKundeFormular(wrap, editB=null){
   const liefertagI  = h("input",{type:"date",value:f.liefertag});
   const lieferzeitI = h("input",{type:"time",value:f.lieferzeit});
   const freitextI   = h("textarea",{rows:"5",placeholder:"Was soll bestellt werden?"}, f.freitext);
+  const bezahltCb   = h("input",{type:"checkbox",style:"width:auto;margin:0;cursor:pointer"});
+  bezahltCb.checked = !!f.bezahlt;
 
   // Bedingte Blöcke
   const abholWrap      = h("div",{style:"margin-top:.7rem"}, h("label",{text:"Abhol-Abteilung"}), abholSel);
   const lieferWrap     = h("div",{style:"margin-top:.7rem"}, h("label",{text:"Lieferadresse"}), lieferI);
-  const lieferzeitWrap = h("div",{}, h("label",{text:"Lieferzeit"}), lieferzeitI);
+  const lieferzeitLbl  = h("label",{text:"Lieferzeit"});
+  const lieferzeitWrap = h("div",{}, lieferzeitLbl, lieferzeitI);
   const rechnungWrap   = h("div",{style:"margin-top:.7rem"}, h("label",{text:"Rechnungsadresse"}), rechnungI);
   const modusWrap      = h("div",{}, h("label",{text:"Abwicklung"}), modusSel, modusHint);
+  const bezahltWrap    = h("label",{style:"margin-top:.7rem;display:flex;align-items:center;gap:.5rem;color:var(--ink);cursor:pointer"},
+                           bezahltCb, "Bereits bezahlt");
 
   function sync(){
     const vorOrt = (bezahlSel.value === "vor_ort");
@@ -1049,8 +1077,10 @@ function renderKundeFormular(wrap, editB=null){
     const abholung = (modusSel.value === "abholung");
     abholWrap.style.display      = abholung ? "" : "none";
     lieferWrap.style.display     = abholung ? "none" : "";
-    lieferzeitWrap.style.display = abholung ? "none" : "";
+    lieferzeitWrap.style.display = "";                       // Zeit jetzt in beiden Fällen Pflicht
+    lieferzeitLbl.textContent    = abholung ? "Abholzeit" : "Lieferzeit";
     rechnungWrap.style.display   = (bezahlSel.value === "rechnung") ? "" : "none";
+    bezahltWrap.style.display    = vorOrt ? "" : "none";     // „Bezahlt" nur bei Vor Ort
   }
 
   bezahlSel.addEventListener("change",()=>{
@@ -1076,6 +1106,7 @@ function renderKundeFormular(wrap, editB=null){
     f.liefertag        = liefertagI.value;
     f.lieferzeit       = lieferzeitI.value;
     f.freitext         = freitextI.value.trim();
+    f.bezahlt          = bezahltCb.checked;
     if (f.bezahlart==="vor_ort") f.modus = "abholung";
   }
 
@@ -1087,13 +1118,14 @@ function renderKundeFormular(wrap, editB=null){
     if (!f.email || f.email.indexOf("@") < 1) return toast("Eine gültige E-Mail-Adresse ist Pflicht.","err");
     if (!f.liefertag)
       return toast(f.modus==="abholung" ? "Abholdatum ist Pflicht." : "Lieferdatum ist Pflicht.","err");
+    if (!f.lieferzeit)
+      return toast(f.modus==="abholung" ? "Abholzeit ist Pflicht." : "Lieferzeit ist Pflicht.","err");
     if (f.bezahlart==="rechnung" && !f.rechnungsadresse)
       return toast("Bei Bezahlung auf Rechnung ist die Rechnungsadresse Pflicht.","err");
     if (f.modus==="abholung"){
       if (!f.abhol_abteilung_id) return toast("Bitte eine Abhol-Abteilung wählen.","err");
     } else {
       if (!f.lieferadresse) return toast("Bei Lieferung ist die Lieferadresse Pflicht.","err");
-      if (!f.lieferzeit)    return toast("Bei Lieferung ist die Lieferzeit Pflicht.","err");
     }
     if (!f.freitext) return toast("Der Bestelltext darf nicht leer sein.","err");
 
@@ -1104,8 +1136,9 @@ function renderKundeFormular(wrap, editB=null){
       rechnungsadresse:   f.bezahlart==="rechnung" ? f.rechnungsadresse : "",
       lieferadresse:      f.modus==="lieferung"  ? f.lieferadresse : "",
       liefertag: f.liefertag,
-      lieferzeit: f.modus==="lieferung" ? f.lieferzeit : "",
-      freitext: f.freitext
+      lieferzeit: f.lieferzeit,
+      freitext: f.freitext,
+      bezahlt: (f.bezahlart==="vor_ort") ? f.bezahlt : false
     };
 
     submitBtn.disabled = true; submitBtn.textContent = editB ? "Speichern…" : "Senden…";
@@ -1117,13 +1150,28 @@ function renderKundeFormular(wrap, editB=null){
     }
     submitBtn.disabled = false; submitBtn.textContent = editB ? "Änderung speichern" : "Kundenbestellung senden";
     if (error){ toast("Konnte nicht speichern: "+error.message,"err"); return; }
+
+    const bestellNr = editB ? editB.bestellnr : (data?.bestellnr || "");
     if (editB){
       state.editKunde = null;
       toast("Kundenbestellung "+editB.bestellnr+" geändert.","ok");
     } else {
-      toast("Kundenbestellung "+(data?.bestellnr||"")+" gesendet.","ok");
+      toast("Kundenbestellung "+bestellNr+" gesendet.","ok");
     }
+
     await ladeDaten();
+
+    // Bezahlstatus setzen/absichern (nur „Vor Ort") über eigene RPC –
+    // so müssen Anlegen/Ändern die Logik nicht kennen.
+    const zielBezahlt = (f.bezahlart==="vor_ort") ? f.bezahlt : false;
+    const row = bestellNr ? state.kundenbestellungen.find(x=>x.bestellnr===bestellNr) : null;
+    if (row && (!!row.bezahlt !== !!zielBezahlt)){
+      const { error: bErr } = await sb.rpc("kundenbestellung_bezahlt_setzen",
+        { p_bestellung_id: row.id, p_bezahlt: zielBezahlt });
+      if (bErr) toast("Bezahlstatus konnte nicht gesetzt werden: "+bErr.message,"err");
+      else await ladeDaten();
+    }
+
     state.tab = "meine"; state.listenModus = "kunde"; renderApp();
   });
 
@@ -1146,6 +1194,7 @@ function renderKundeFormular(wrap, editB=null){
         h("div",{}, h("label",{text:"Bezahlart"}), bezahlSel),
         modusWrap
       ),
+      bezahltWrap,
       abholWrap,
       lieferWrap,
       h("div",{class:"grid2",style:"margin-top:.7rem"},
