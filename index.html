@@ -1027,7 +1027,7 @@ function renderAbteilungen(wrap){
     ),
     abt.length===0 ? h("div",{class:"empty"},h("div",{class:"muted",text:"Noch keine Abteilungen."})) : null,
     h("div",{class:"muted",style:"font-size:12px;padding:.5rem .5rem 0",
-      text:"Leeres Feld = kein Bestellschluss (immer offen). Die Zeit gilt täglich, Zeitzone Europe/Zurich. Sammelbestellung: Haken = Tagesbestellungen werden beim „Tag drucken“ auf einem Blatt zusammengefasst."})
+      text:"Keine Zeit eingetragen = kein Bestellschluss (Bestellungen 24h möglich). Die Zeit gilt täglich. Sammelbestellung: Haken = Tagesbestellungen werden beim „Tag drucken“ pro Abteilung auf einem Blatt zusammengefasst."})
   ));
 
   // --- Passwort setzen (jedes Konto) ---
