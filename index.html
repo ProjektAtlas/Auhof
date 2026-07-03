@@ -36,11 +36,12 @@
   .btn-danger{background:transparent; color:var(--danger); border:1px solid #4a2c30}
   .btn-danger:hover{background:#2c1c1e}
   .btn-sm{padding:.35rem .6rem; font-size:13px; border-radius:8px}
-  input,select{
+  input,select,textarea{
     font-family:inherit; font-size:15px; color:var(--ink); background:var(--panel2);
     border:1px solid var(--line); border-radius:10px; padding:.55rem .7rem; width:100%;
   }
-  input:focus,select:focus{outline:2px solid var(--gold-deep); outline-offset:-1px; border-color:var(--gold-deep)}
+  textarea{resize:vertical; line-height:1.45}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--gold-deep); outline-offset:-1px; border-color:var(--gold-deep)}
   label{display:block; font-size:13px; color:var(--dim); margin-bottom:.3rem}
   a{color:var(--gold)}
 
@@ -148,6 +149,18 @@
 
   @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 
+  /* Umschalter Abteilung <-> Kunde */
+  .seg{display:inline-flex; gap:.25rem; background:var(--panel2); border:1px solid var(--line);
+    border-radius:10px; padding:.2rem}
+  .seg-btn{background:transparent; color:var(--dim); border-radius:8px; padding:.4rem .8rem; font-weight:500}
+  .seg-btn.active{background:var(--gold); color:#241a0c; font-weight:600}
+
+  /* Info-Zeilen auf Kunden-Tickets */
+  .kv{display:flex; gap:.6rem; padding:.18rem 0; font-size:14px}
+  .kv .k{color:var(--dim); min-width:130px; flex-shrink:0}
+  .kv .v{color:var(--ink); white-space:pre-wrap; overflow-wrap:anywhere}
+  .kv-div{border-top:1px dashed var(--line); margin:.5rem 0}
+
   /* Print */
   #print-area{position:fixed; left:-10000px; top:0}
   @media print{
@@ -162,6 +175,9 @@
     #print-area .p-page + .p-page{page-break-before:always}
     #print-area .p-sub{margin-top:16px}
     #print-area .p-sub .p-nr{font-size:15px}
+    #print-area .pk{font-weight:600; width:150px; vertical-align:top}
+    #print-area .p-ft{white-space:pre-wrap; margin-top:6px}
+    #print-area .p-ft-h{margin-top:12px; font-weight:700}
   }
 </style>
 </head>
@@ -185,9 +201,13 @@ const state = {
   tab:null, subtab:null, // oberste Ebene + Untertab (Verwaltung)
   artikelFilter:"",      // Gruppen-Filter in „Artikel erfassen" ("" = alle)
   gruppen:[], artikel:[], bestellungen:[], konten:[],
+  kundenbestellungen:[], // Bestellart "Kunden" (Freitext)
+  abteilungenListe:[],   // {id,name,kuerzel} aller Abteilungen (für Abhol-Auswahl)
   cart:{},               // { artikel_id: menge }
-  editBestellung:null,   // aktuell zu ändernde Bestellung (oder null)
+  editBestellung:null,   // aktuell zu ändernde Abteilungsbestellung (oder null)
   editProbleme:[],       // Namen inaktiver/entfernter Artikel beim Ändern
+  editKunde:null,        // aktuell zu ändernde Kundenbestellung (oder null)
+  listenModus:"abteilung", // Umschalter in den Listen: "abteilung" | "kunde"
   bestellTag:null,       // gewählter Tag in "Bestellungen" (YYYY-MM-DD), null = heute
 };
 
@@ -225,6 +245,17 @@ function fmtDatum(iso){
   const d=new Date(iso);
   return d.toLocaleDateString("de-CH",{day:"2-digit",month:"2-digit",year:"numeric"})
        + " " + d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"});
+}
+// Reines Datum "YYYY-MM-DD" -> "TT.MM.JJJJ" (ohne Zeitzonen-Verschiebung)
+function fmtTag(d){
+  if (!d) return "";
+  const [y,m,day] = String(d).slice(0,10).split("-");
+  return day+"."+m+"."+y;
+}
+function abteilungName(id){
+  if (!id) return "";
+  const a = (state.abteilungenListe||[]).find(x=>x.id===id);
+  return a ? a.name : "";
 }
 
 // ---- Bestellschluss (tägliche Uhrzeit, Zeitzone Europe/Zurich) ----
@@ -273,6 +304,8 @@ async function logout(){
   await sb.auth.signOut();
   state.konto=null; state.cart={}; state.tab=null; state.subtab=null;
   state.editBestellung=null; state.editProbleme=[];
+  state.editKunde=null; state.listenModus="abteilung";
+  state.kundenbestellungen=[]; state.abteilungenListe=[];
   renderLogin();
 }
 
@@ -297,6 +330,20 @@ async function ladeDaten(){
     state.bestellungen = b.data || [];
   }
 
+  // Kundenbestellungen (RLS: eigene bzw. für Konditorei/Leitung/Admin alle)
+  const kb = await sb.from("kundenbestellungen")
+    .select(`id,bestellnr,jahr,monat,laufnr,erstellt_am,
+             vorname,nachname,email,telefon,bezahlart,modus,
+             rechnungsadresse,lieferadresse,liefertag,lieferzeit,freitext,
+             abteilung_id,abhol_abteilung_id,
+             abteilung:konten!kundenbestellungen_abteilung_id_fkey(name,kuerzel,sammelbestellung)`)
+    .order("erstellt_am",{ascending:false});
+  state.kundenbestellungen = kb.data || [];
+
+  // Abteilungs-Liste (id,name,kuerzel) für die Abhol-Auswahl im Kundenformular
+  const al = await sb.rpc("abteilungen_liste");
+  state.abteilungenListe = al.data || [];
+
   if (r==="admin" || r==="leitung"){
     const k = await sb.from("konten").select("id,name,rolle,kuerzel,bestellschluss,sammelbestellung").order("rolle").order("name");
     state.konten = k.data || [];
@@ -304,7 +351,7 @@ async function ladeDaten(){
 }
 
 function tabsFor(rolle){
-  if (rolle==="abteilung") return [["bestellen","Bestellen"],["meine","Meine Bestellungen"]];
+  if (rolle==="abteilung") return [["bestellen","Bestellen"],["kunde","Kundenbestellung"],["meine","Meine Bestellungen"]];
   if (rolle==="konditorei") return [["alle","Bestellungen"]];
   if (rolle==="leitung")   return [["alle","Bestellungen"],["verwaltung", ROLLE_LABEL.leitung]];
   if (rolle==="admin")     return [["alle","Bestellungen"],["verwaltung", ROLLE_LABEL.admin]];
@@ -369,6 +416,7 @@ function renderApp(){
         onclick:()=>{
           state.tab=id;
           if (state.editBestellung){ state.editBestellung=null; state.editProbleme=[]; state.cart={}; }
+          if (state.editKunde){ state.editKunde=null; }
           renderApp();
         }})
     )
@@ -379,6 +427,7 @@ function renderApp(){
 
   const view = state.tab;
   if (view==="bestellen")       renderBestellen(wrap, state.editBestellung);
+  else if (view==="kunde")      renderKundeFormular(wrap, state.editKunde);
   else if (view==="meine")      renderBestellungen(wrap, true);
   else if (view==="alle")       renderBestellungen(wrap, false);
   else if (view==="verwaltung") renderVerwaltung(wrap);
@@ -567,92 +616,111 @@ function renderBestellen(wrap, editB=null){
 
 // =====================================================================
 //  Bestellungen anzeigen  (meineNur = nur eigene -> Abteilungsansicht)
+//  Mit Umschalter: Abteilungsbestellungen <-> Kundenbestellungen
 // =====================================================================
 function renderBestellungen(wrap, meineNur){
   const rolle = state.konto.rolle;
-  const darfLoeschen = rolle==="admin" || rolle==="leitung";
-  const darfDrucken  = rolle==="admin" || rolle==="leitung" || rolle==="konditorei";
-  const darfAendern  = rolle==="abteilung" && meineNur;
-  const zeigeAbteilung = !meineNur; // in "alle" auch die Abteilung zeigen
+  const darfLoeschen   = rolle==="admin" || rolle==="leitung";
+  const darfDrucken    = rolle==="admin" || rolle==="leitung" || rolle==="konditorei";
+  const darfAendernAbt = rolle==="abteilung" && meineNur;   // eigene ändern
+  const zeigeAbteilung = !meineNur;                          // in "alle" die Abteilung zeigen
 
-  if (state.bestellungen.length===0){
-    wrap.append(h("div",{class:"empty"},
-      h("div",{class:"big",text: meineNur ? "Noch keine Bestellungen." : "Es sind noch keine Bestellungen da."}),
-      h("div",{class:"muted",text: meineNur ? 'Wechsle zu „Bestellen“, um eine anzulegen.' : ''})));
-    return;
-  }
+  if (state.listenModus!=="kunde") state.listenModus = "abteilung";
 
-  // =========================================================
-  //  "alle": Tagesfilter (Datum) + Abteilungsfilter + Tag drucken
-  // =========================================================
-  if (!meineNur){
-    const dateI = h("input",{type:"date",style:"max-width:170px"});
-    dateI.value = state.bestellTag || heuteZuerich();
-
-    const abtSel  = h("select",{style:"max-width:200px"});
-    const countLbl = h("div",{class:"muted",style:"font-size:13px"});
-    const printBtn = darfDrucken
-      ? h("button",{class:"btn btn-sm",text:"Tag drucken"}) : null;
-
-    wrap.append(h("div",{class:"row",style:"margin-bottom:1rem;align-items:flex-end"},
-      h("div",{}, h("label",{text:"Tag"}), dateI),
-      h("div",{}, h("label",{text:"Abteilung"}), abtSel),
-      h("div",{style:"margin-left:auto;display:flex;align-items:center;gap:.7rem"}, countLbl, printBtn)
-    ));
-
-    const container = h("div",{});
-    wrap.append(container);
-
-    const aktTag = ()=> dateI.value || heuteZuerich();
-    const tagesDaten = ()=> state.bestellungen.filter(b=>zurichDatum(b.erstellt_am)===aktTag());
-    const sichtbareDaten = ()=>{
-      let d = tagesDaten();
-      if (abtSel.value) d = d.filter(b=>b.abteilung?.kuerzel===abtSel.value);
-      return d;
-    };
-
-    function baueAbtOptionen(){
-      const kuerzel = [...new Set(tagesDaten().map(b=>b.abteilung?.kuerzel).filter(Boolean))].sort();
-      const vorher = abtSel.value;
-      clear(abtSel);
-      abtSel.append(h("option",{value:"",text:"Alle Abteilungen"}));
-      kuerzel.forEach(k=>abtSel.append(h("option",{value:k,text:k})));
-      abtSel.value = kuerzel.includes(vorher) ? vorher : "";
-    }
-
-    function zeichne(){
-      const daten = sichtbareDaten();
-      clear(countLbl);
-      countLbl.textContent = daten.length + (daten.length===1 ? " Bestellung" : " Bestellungen");
-      if (printBtn){
-        printBtn.disabled = daten.length===0;
-        printBtn.style.opacity = daten.length===0 ? .5 : 1;
-      }
-      zeichneListe(container, daten, "Für diesen Tag gibt es keine Bestellungen.");
-    }
-
-    dateI.addEventListener("change",()=>{
-      if (!dateI.value) dateI.value = heuteZuerich();   // leeres Feld = heute
-      state.bestellTag = dateI.value;
-      baueAbtOptionen(); zeichne();
-    });
-    abtSel.addEventListener("change", zeichne);
-    if (printBtn) printBtn.addEventListener("click", ()=>druckeTag(sichtbareDaten()));
-
-    baueAbtOptionen();
-    zeichne();
-    return;
+  // ---- Umschalter Abteilung <-> Kunde ----
+  function segLeiste(){
+    return h("div",{class:"seg",style:"margin-bottom:1.1rem"},
+      h("button",{class:"seg-btn"+(state.listenModus==="abteilung"?" active":""),
+        text:"Abteilungsbestellungen",
+        onclick:()=>{ if(state.listenModus!=="abteilung"){ state.listenModus="abteilung"; renderApp(); } }}),
+      h("button",{class:"seg-btn"+(state.listenModus==="kunde"?" active":""),
+        text:"Kundenbestellungen",
+        onclick:()=>{ if(state.listenModus!=="kunde"){ state.listenModus="kunde"; renderApp(); } }})
+    );
   }
 
   // =========================================================
   //  "meine": eigene Bestellungen (ohne Datums-/Drucksteuerung)
   // =========================================================
+  if (meineNur){
+    wrap.append(segLeiste());
+    const container = h("div",{});
+    wrap.append(container);
+    if (state.listenModus==="abteilung")
+      zeichneAbtListe(container, state.bestellungen, "Noch keine Abteilungsbestellungen.");
+    else
+      zeichneKundeListe(container, state.kundenbestellungen, "Noch keine Kundenbestellungen.");
+    return;
+  }
+
+  // =========================================================
+  //  "alle": Tagesfilter + Abteilungsfilter + Tag drucken
+  //  (Tag drucken umfasst IMMER beide Bestellarten)
+  // =========================================================
+  const dateI = h("input",{type:"date",style:"max-width:170px"});
+  dateI.value = state.bestellTag || heuteZuerich();
+
+  const abtSel   = h("select",{style:"max-width:200px"});
+  const countLbl = h("div",{class:"muted",style:"font-size:13px"});
+  const printBtn = darfDrucken ? h("button",{class:"btn btn-sm",text:"Tag drucken"}) : null;
+
+  wrap.append(h("div",{class:"row",style:"margin-bottom:1rem;align-items:flex-end"},
+    h("div",{}, h("label",{text:"Tag"}), dateI),
+    h("div",{}, h("label",{text:"Abteilung"}), abtSel),
+    h("div",{style:"margin-left:auto;display:flex;align-items:center;gap:.7rem"}, countLbl, printBtn)
+  ));
+
+  wrap.append(segLeiste());
   const container = h("div",{});
   wrap.append(container);
-  zeichneListe(container, state.bestellungen, "Keine Bestellungen.");
 
-  // ---- gemeinsame Listen-Ausgabe ----
-  function zeichneListe(container, daten, leerText){
+  const aktTag   = ()=> dateI.value || heuteZuerich();
+  const abtTag   = ()=> state.bestellungen.filter(b=>zurichDatum(b.erstellt_am)===aktTag());
+  const kundeTag = ()=> state.kundenbestellungen.filter(b=>zurichDatum(b.erstellt_am)===aktTag());
+  const nachAbt  = (arr)=> abtSel.value ? arr.filter(b=>b.abteilung?.kuerzel===abtSel.value) : arr;
+
+  function baueAbtOptionen(){
+    const kuerzel = [...new Set([
+      ...abtTag().map(b=>b.abteilung?.kuerzel).filter(Boolean),
+      ...kundeTag().map(b=>b.abteilung?.kuerzel).filter(Boolean),
+    ])].sort();
+    const vorher = abtSel.value;
+    clear(abtSel);
+    abtSel.append(h("option",{value:"",text:"Alle Abteilungen"}));
+    kuerzel.forEach(k=>abtSel.append(h("option",{value:k,text:k})));
+    abtSel.value = kuerzel.includes(vorher) ? vorher : "";
+  }
+
+  function zeichne(){
+    if (state.listenModus==="abteilung"){
+      const daten = nachAbt(abtTag());
+      countLbl.textContent = daten.length + (daten.length===1?" Abteilungsbestellung":" Abteilungsbestellungen");
+      zeichneAbtListe(container, daten, "Für diesen Tag gibt es keine Abteilungsbestellungen.");
+    } else {
+      const daten = nachAbt(kundeTag());
+      countLbl.textContent = daten.length + (daten.length===1?" Kundenbestellung":" Kundenbestellungen");
+      zeichneKundeListe(container, daten, "Für diesen Tag gibt es keine Kundenbestellungen.");
+    }
+    if (printBtn){
+      const total = nachAbt(abtTag()).length + nachAbt(kundeTag()).length;
+      printBtn.disabled = total===0;
+      printBtn.style.opacity = total===0 ? .5 : 1;
+    }
+  }
+
+  dateI.addEventListener("change",()=>{
+    if (!dateI.value) dateI.value = heuteZuerich();
+    state.bestellTag = dateI.value;
+    baueAbtOptionen(); zeichne();
+  });
+  abtSel.addEventListener("change", zeichne);
+  if (printBtn) printBtn.addEventListener("click", ()=>druckeTag(nachAbt(abtTag()), nachAbt(kundeTag())));
+
+  baueAbtOptionen();
+  zeichne();
+
+  // ---- Liste: Abteilungsbestellungen ----
+  function zeichneAbtListe(container, daten, leerText){
     clear(container);
     if (daten.length===0){
       container.append(h("div",{class:"empty"}, h("div",{class:"muted",text:leerText||"Keine Treffer."})));
@@ -673,7 +741,7 @@ function renderBestellungen(wrap, meineNur){
       });
       const zu = istNachBestellschluss(state.konto.bestellschluss);
       const actions = h("div",{class:"ticket-actions"},
-        darfAendern ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
+        darfAendernAbt ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
           ...(zu ? {disabled:"disabled", style:"opacity:.5"} : {}),
           onclick:()=>starteAendern(b)}) : null,
         darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeBestellung(b)}) : null,
@@ -684,11 +752,56 @@ function renderBestellungen(wrap, meineNur){
     }
   }
 
+  // ---- Liste: Kundenbestellungen ----
+  function zeichneKundeListe(container, daten, leerText){
+    clear(container);
+    if (daten.length===0){
+      container.append(h("div",{class:"empty"}, h("div",{class:"muted",text:leerText||"Keine Kundenbestellungen."})));
+      return;
+    }
+    for (const b of daten){
+      const kundeName = ((b.vorname||"")+" "+(b.nachname||"")).trim();
+      const top = h("div",{class:"ticket-top"},
+        h("span",{class:"ticket-nr",text:b.bestellnr}),
+        h("span",{class:"muted",style:"font-size:13px",text:kundeName}),
+        zeigeAbteilung && b.abteilung ? h("span",{class:"muted",style:"font-size:13px",text:"· "+b.abteilung.name}) : null,
+        h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
+      );
+      const body = h("div",{class:"ticket-body"});
+      kundeInfoPaare(b).forEach(([k,v])=>{
+        body.append(h("div",{class:"kv"}, h("span",{class:"k",text:k}), h("span",{class:"v",text:v})));
+      });
+      body.append(h("div",{class:"kv-div"}));
+      body.append(h("div",{class:"kv"},
+        h("span",{class:"k",text:"Bestelltext"}),
+        h("span",{class:"v",text:b.freitext||""})));
+
+      const zu = istNachBestellschluss(state.konto.bestellschluss);
+      const actions = h("div",{class:"ticket-actions"},
+        darfAendernAbt ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
+          ...(zu ? {disabled:"disabled", style:"opacity:.5"} : {}),
+          onclick:()=>starteKundeAendern(b)}) : null,
+        darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeKundeBestellung(b)}) : null,
+        darfLoeschen ? h("button",{class:"btn-danger btn-sm",text:"Löschen",
+          onclick:()=>loescheKundeBestellung(b)}) : null
+      );
+      container.append(h("div",{class:"ticket"}, top, body, actions));
+    }
+  }
+
   async function loescheBestellung(b){
     if (!confirm("Bestellung "+b.bestellnr+" wirklich löschen?")) return;
     const { error } = await sb.from("bestellungen").delete().eq("id", b.id);
     if (error){ toast("Löschen fehlgeschlagen: "+error.message,"err"); return; }
     toast("Bestellung "+b.bestellnr+" gelöscht.","ok");
+    await ladeDaten(); renderApp();
+  }
+
+  async function loescheKundeBestellung(b){
+    if (!confirm("Kundenbestellung "+b.bestellnr+" wirklich löschen?")) return;
+    const { error } = await sb.from("kundenbestellungen").delete().eq("id", b.id);
+    if (error){ toast("Löschen fehlgeschlagen: "+error.message,"err"); return; }
+    toast("Kundenbestellung "+b.bestellnr+" gelöscht.","ok");
     await ladeDaten(); renderApp();
   }
 }
@@ -712,12 +825,15 @@ function druckeBestellung(b){
   window.print();
 }
 
-// Tagesdruck: nach Abteilung gruppiert.
-//  - Abteilung MIT Haken (sammelbestellung): alle Bestellungen des Tags
-//    untereinander auf EINEM Blatt.
-//  - Abteilung OHNE Haken: jede Bestellung auf einem eigenen Blatt.
-function druckeTag(bestellungen){
-  if (!bestellungen || bestellungen.length===0){
+// Tagesdruck: nach Abteilung gruppiert (Variante A).
+//  Pro Abteilung zuerst die Abteilungsbestellungen:
+//    - MIT Haken (sammelbestellung): alle des Tags untereinander auf EINEM Blatt.
+//    - OHNE Haken: jede Bestellung auf einem eigenen Blatt.
+//  Danach die Kundenbestellungen derselben Abteilung: IMMER je ein eigenes Blatt.
+function druckeTag(abtBestellungen, kundeBestellungen){
+  abtBestellungen   = abtBestellungen   || [];
+  kundeBestellungen = kundeBestellungen || [];
+  if (abtBestellungen.length===0 && kundeBestellungen.length===0){
     toast("Für diesen Tag gibt es keine Bestellungen.","err"); return;
   }
   const area = document.getElementById("print-area");
@@ -732,53 +848,320 @@ function druckeTag(bestellungen){
     );
   }
 
-  // nach Abteilung gruppieren (Schlüssel: Kürzel, sonst Name)
+  // nach Abteilung gruppieren (beide Arten), Schlüssel: Kürzel, sonst Name
   const gruppen = new Map();
-  for (const b of bestellungen){
+  function eintrag(b){
     const key = b.abteilung?.kuerzel || b.abteilung?.name || "—";
     if (!gruppen.has(key)){
       gruppen.set(key, {
-        name: b.abteilung?.name || key,
-        sort: b.abteilung?.kuerzel || b.abteilung?.name || "",
+        name:   b.abteilung?.name || key,
+        sort:   b.abteilung?.kuerzel || b.abteilung?.name || "",
         sammel: !!b.abteilung?.sammelbestellung,
-        orders: []
+        abt: [], kunde: []
       });
     }
-    gruppen.get(key).orders.push(b);
+    return gruppen.get(key);
   }
+  for (const b of abtBestellungen)   eintrag(b).abt.push(b);
+  for (const b of kundeBestellungen) eintrag(b).kunde.push(b);
 
   const sortiert = [...gruppen.values()].sort((a,b)=>a.sort.localeCompare(b.sort));
 
   for (const g of sortiert){
-    const orders = [...g.orders].sort((x,y)=>String(x.bestellnr).localeCompare(String(y.bestellnr)));
-    if (g.sammel){
-      // ein Blatt, Bestellungen untereinander
-      const seite = h("div",{class:"p-page"},
-        h("h2",{text:"Auhof — Sammelbestellung"}),
-        h("div",{style:"margin-top:4px;font-weight:600",text:g.name}),
-        h("div",{style:"color:#555",text:"Datum: "+(orders[0]?fmtDatum(orders[0].erstellt_am):"")})
-      );
-      orders.forEach(b=>{
-        seite.append(h("div",{class:"p-sub"},
-          h("div",{class:"p-nr",text:b.bestellnr}),
-          posTabelle(b)
-        ));
-      });
-      area.append(seite);
-    } else {
-      // jede Bestellung ein eigenes Blatt
-      orders.forEach(b=>{
-        area.append(h("div",{class:"p-page"},
-          h("h2",{text:"Auhof — Bestellung"}),
-          h("div",{class:"p-nr",style:"margin-top:6px;font-size:18px",text:b.bestellnr}),
-          h("div",{style:"margin-top:4px",text:"Abteilung: "+g.name}),
-          h("div",{style:"color:#555",text:"Datum: "+fmtDatum(b.erstellt_am)}),
-          posTabelle(b)
-        ));
-      });
+    // 1) Abteilungsbestellungen
+    const orders = [...g.abt].sort((x,y)=>String(x.bestellnr).localeCompare(String(y.bestellnr)));
+    if (orders.length){
+      if (g.sammel){
+        const seite = h("div",{class:"p-page"},
+          h("h2",{text:"Auhof — Sammelbestellung"}),
+          h("div",{style:"margin-top:4px;font-weight:600",text:g.name}),
+          h("div",{style:"color:#555",text:"Datum: "+(orders[0]?fmtDatum(orders[0].erstellt_am):"")})
+        );
+        orders.forEach(b=>{
+          seite.append(h("div",{class:"p-sub"},
+            h("div",{class:"p-nr",text:b.bestellnr}),
+            posTabelle(b)
+          ));
+        });
+        area.append(seite);
+      } else {
+        orders.forEach(b=>{
+          area.append(h("div",{class:"p-page"},
+            h("h2",{text:"Auhof — Bestellung"}),
+            h("div",{class:"p-nr",style:"margin-top:6px;font-size:18px",text:b.bestellnr}),
+            h("div",{style:"margin-top:4px",text:"Abteilung: "+g.name}),
+            h("div",{style:"color:#555",text:"Datum: "+fmtDatum(b.erstellt_am)}),
+            posTabelle(b)
+          ));
+        });
+      }
     }
+    // 2) Kundenbestellungen dieser Abteilung: je ein eigenes Blatt
+    const korders = [...g.kunde].sort((x,y)=>String(x.bestellnr).localeCompare(String(y.bestellnr)));
+    korders.forEach(b=> area.append(kundeDruckSeite(b, g.name)));
   }
   window.print();
+}
+
+// =====================================================================
+//  Kundenbestellung: Infozeilen (für Anzeige und Druck)
+// =====================================================================
+function kundeInfoPaare(b){
+  const paare = [];
+  paare.push(["Kunde", ((b.vorname||"")+" "+(b.nachname||"")).trim()]);
+  paare.push(["E-Mail", b.email||""]);
+  if (b.telefon) paare.push(["Telefon", b.telefon]);
+  paare.push(["Bezahlart", b.bezahlart==="rechnung" ? "Auf Rechnung" : "Vor Ort"]);
+  if (b.modus==="abholung"){
+    const an = abteilungName(b.abhol_abteilung_id);
+    paare.push(["Abwicklung", "Abholung" + (an ? " – "+an : "")]);
+    paare.push(["Abholdatum", fmtTag(b.liefertag)]);
+  } else {
+    paare.push(["Abwicklung", "Lieferung"]);
+    paare.push(["Lieferadresse", b.lieferadresse||""]);
+    paare.push(["Liefertermin", fmtTag(b.liefertag) + (b.lieferzeit ? ", "+hhmm(b.lieferzeit)+" Uhr" : "")]);
+  }
+  if (b.bezahlart==="rechnung") paare.push(["Rechnungsadresse", b.rechnungsadresse||""]);
+  return paare;
+}
+
+function kundeDruckSeite(b, abtName){
+  const infoTbl = h("table",{},
+    ...kundeInfoPaare(b).map(([k,v])=> h("tr",{},
+      h("td",{class:"pk",text:k}),
+      h("td",{text:v})
+    ))
+  );
+  return h("div",{class:"p-page"},
+    h("h2",{text:"Auhof — Kundenbestellung"}),
+    h("div",{class:"p-nr",style:"margin-top:6px;font-size:18px",text:b.bestellnr}),
+    (abtName ? h("div",{style:"margin-top:4px",text:"Erfasst: "+abtName}) : null),
+    h("div",{style:"color:#555",text:"Erstellt: "+fmtDatum(b.erstellt_am)}),
+    infoTbl,
+    h("div",{class:"p-ft-h",text:"Bestelltext"}),
+    h("div",{class:"p-ft",text:b.freitext||""})
+  );
+}
+
+function druckeKundeBestellung(b){
+  const area = document.getElementById("print-area");
+  clear(area);
+  area.append(kundeDruckSeite(b, b.abteilung?.name || null));
+  window.print();
+}
+
+// =====================================================================
+//  Kundenbestellung ändern starten
+// =====================================================================
+function starteKundeAendern(b){
+  state.editKunde = b;
+  state.tab = "kunde";
+  renderApp();
+}
+
+// =====================================================================
+//  Kundenbestellung: Formular (Abteilung) — Anlegen / Ändern
+// =====================================================================
+function renderKundeFormular(wrap, editB=null){
+  const f = editB ? {
+    vorname: editB.vorname||"", nachname: editB.nachname||"", email: editB.email||"",
+    telefon: editB.telefon||"", bezahlart: editB.bezahlart||"vor_ort",
+    modus: editB.modus||"abholung", abhol_abteilung_id: editB.abhol_abteilung_id||"",
+    rechnungsadresse: editB.rechnungsadresse||"", lieferadresse: editB.lieferadresse||"",
+    liefertag: editB.liefertag ? String(editB.liefertag).slice(0,10) : "",
+    lieferzeit: editB.lieferzeit ? hhmm(editB.lieferzeit) : "",
+    freitext: editB.freitext||""
+  } : {
+    vorname:"", nachname:"", email:"", telefon:"", bezahlart:"vor_ort",
+    modus:"abholung", abhol_abteilung_id:"", rechnungsadresse:"", lieferadresse:"",
+    liefertag:"", lieferzeit:"", freitext:""
+  };
+
+  // Kopf im Ändern-Modus
+  if (editB){
+    wrap.append(h("div",{class:"card",style:"margin-bottom:1rem;display:flex;align-items:center;gap:.8rem"},
+      h("div",{},
+        h("div",{style:"font-weight:600",text:"Kundenbestellung ändern"}),
+        h("div",{class:"mono muted",style:"font-size:13px",text:editB.bestellnr})
+      ),
+      h("button",{class:"btn-ghost btn-sm",style:"margin-left:auto",text:"Abbrechen",
+        onclick:()=>{ state.editKunde=null; state.tab="meine"; state.listenModus="kunde"; renderApp(); }})
+    ));
+  }
+
+  // Bestellschluss-Hinweis / -Sperre
+  const schluss = state.konto.bestellschluss;
+  const gesperrt = istNachBestellschluss(schluss);
+  if (schluss){
+    wrap.append(h("div",{class:"card",
+      style:"padding:.7rem .9rem;margin-bottom:1rem;"+(gesperrt ? "border-color:#5a2f34;background:#2c1c1e" : "")},
+      gesperrt
+        ? h("div",{style:"color:#f0c2c7"},
+            h("b",{text:"Bestellschluss "+hhmm(schluss)+" Uhr überschritten."}),
+            " Für heute sind keine "+(editB?"Änderungen":"Kundenbestellungen")+" mehr möglich.")
+        : h("div",{class:"muted"}, "Bestellschluss heute um ",
+            h("b",{style:"color:var(--ink)",text:hhmm(schluss)+" Uhr"}), ".")
+    ));
+  }
+
+  // ---- Eingabefelder ----
+  const vornameI  = h("input",{type:"text",value:f.vorname});
+  const nachnameI = h("input",{type:"text",value:f.nachname});
+  const emailI    = h("input",{type:"email",value:f.email});
+  const telefonI  = h("input",{type:"tel",value:f.telefon});
+
+  const bezahlSel = h("select",{},
+    h("option",{value:"vor_ort",  ...(f.bezahlart==="vor_ort" ?{selected:"selected"}:{}), text:"Vor Ort"}),
+    h("option",{value:"rechnung", ...(f.bezahlart==="rechnung"?{selected:"selected"}:{}), text:"Auf Rechnung"})
+  );
+  const modusSel = h("select",{},
+    h("option",{value:"abholung",  ...(f.modus==="abholung" ?{selected:"selected"}:{}), text:"Abholung"}),
+    h("option",{value:"lieferung", ...(f.modus==="lieferung"?{selected:"selected"}:{}), text:"Lieferung"})
+  );
+  const modusHint = h("div",{class:"muted",style:"font-size:12px;margin-top:.3rem",
+    text:"Vor Ort ⇒ nur Abholung möglich."});
+
+  const abholSel = h("select",{},
+    h("option",{value:"",text:"— Abteilung wählen —"}),
+    ...state.abteilungenListe.map(a=>h("option",{value:a.id,
+      ...(a.id===f.abhol_abteilung_id?{selected:"selected"}:{}), text:a.name}))
+  );
+
+  const rechnungI   = h("textarea",{rows:"2",placeholder:"Strasse, PLZ Ort"}, f.rechnungsadresse);
+  const lieferI     = h("textarea",{rows:"2",placeholder:"Strasse, PLZ Ort"}, f.lieferadresse);
+  const liefertagI  = h("input",{type:"date",value:f.liefertag});
+  const lieferzeitI = h("input",{type:"time",value:f.lieferzeit});
+  const freitextI   = h("textarea",{rows:"5",placeholder:"Was soll bestellt werden?"}, f.freitext);
+
+  // Bedingte Blöcke
+  const abholWrap      = h("div",{style:"margin-top:.7rem"}, h("label",{text:"Abhol-Abteilung"}), abholSel);
+  const lieferWrap     = h("div",{style:"margin-top:.7rem"}, h("label",{text:"Lieferadresse"}), lieferI);
+  const lieferzeitWrap = h("div",{}, h("label",{text:"Lieferzeit"}), lieferzeitI);
+  const rechnungWrap   = h("div",{style:"margin-top:.7rem"}, h("label",{text:"Rechnungsadresse"}), rechnungI);
+  const modusWrap      = h("div",{}, h("label",{text:"Abwicklung"}), modusSel, modusHint);
+
+  function sync(){
+    const vorOrt = (bezahlSel.value === "vor_ort");
+    modusSel.disabled = vorOrt;
+    if (vorOrt){ modusSel.value = "abholung"; f.modus = "abholung"; }
+    modusHint.style.display = vorOrt ? "" : "none";
+
+    const abholung = (modusSel.value === "abholung");
+    abholWrap.style.display      = abholung ? "" : "none";
+    lieferWrap.style.display     = abholung ? "none" : "";
+    lieferzeitWrap.style.display = abholung ? "none" : "";
+    rechnungWrap.style.display   = (bezahlSel.value === "rechnung") ? "" : "none";
+  }
+
+  bezahlSel.addEventListener("change",()=>{
+    f.bezahlart = bezahlSel.value;
+    if (f.bezahlart==="vor_ort"){ modusSel.value="abholung"; f.modus="abholung"; }
+    sync();
+  });
+  modusSel.addEventListener("change",()=>{ f.modus = modusSel.value; sync(); });
+
+  const submitBtn = h("button",{class:"btn",text: editB ? "Änderung speichern" : "Kundenbestellung senden"});
+  if (gesperrt){ submitBtn.disabled = true; submitBtn.style.opacity = .5; }
+
+  function readForm(){
+    f.vorname          = vornameI.value.trim();
+    f.nachname         = nachnameI.value.trim();
+    f.email            = emailI.value.trim();
+    f.telefon          = telefonI.value.trim();
+    f.bezahlart        = bezahlSel.value;
+    f.modus            = modusSel.value;
+    f.abhol_abteilung_id = abholSel.value;
+    f.rechnungsadresse = rechnungI.value.trim();
+    f.lieferadresse    = lieferI.value.trim();
+    f.liefertag        = liefertagI.value;
+    f.lieferzeit       = lieferzeitI.value;
+    f.freitext         = freitextI.value.trim();
+    if (f.bezahlart==="vor_ort") f.modus = "abholung";
+  }
+
+  submitBtn.addEventListener("click", async ()=>{
+    readForm();
+    if (istNachBestellschluss(state.konto.bestellschluss))
+      return toast("Bestellschluss überschritten – heute nicht mehr möglich.","err");
+    if (!f.vorname || !f.nachname) return toast("Vor- und Nachname sind Pflicht.","err");
+    if (!f.email || f.email.indexOf("@") < 1) return toast("Eine gültige E-Mail-Adresse ist Pflicht.","err");
+    if (!f.liefertag)
+      return toast(f.modus==="abholung" ? "Abholdatum ist Pflicht." : "Lieferdatum ist Pflicht.","err");
+    if (f.bezahlart==="rechnung" && !f.rechnungsadresse)
+      return toast("Bei Bezahlung auf Rechnung ist die Rechnungsadresse Pflicht.","err");
+    if (f.modus==="abholung"){
+      if (!f.abhol_abteilung_id) return toast("Bitte eine Abhol-Abteilung wählen.","err");
+    } else {
+      if (!f.lieferadresse) return toast("Bei Lieferung ist die Lieferadresse Pflicht.","err");
+      if (!f.lieferzeit)    return toast("Bei Lieferung ist die Lieferzeit Pflicht.","err");
+    }
+    if (!f.freitext) return toast("Der Bestelltext darf nicht leer sein.","err");
+
+    const p_daten = {
+      vorname: f.vorname, nachname: f.nachname, email: f.email, telefon: f.telefon,
+      bezahlart: f.bezahlart, modus: f.modus,
+      abhol_abteilung_id: f.modus==="abholung"  ? f.abhol_abteilung_id : "",
+      rechnungsadresse:   f.bezahlart==="rechnung" ? f.rechnungsadresse : "",
+      lieferadresse:      f.modus==="lieferung"  ? f.lieferadresse : "",
+      liefertag: f.liefertag,
+      lieferzeit: f.modus==="lieferung" ? f.lieferzeit : "",
+      freitext: f.freitext
+    };
+
+    submitBtn.disabled = true; submitBtn.textContent = editB ? "Speichern…" : "Senden…";
+    let data, error;
+    if (editB){
+      ({ data, error } = await sb.rpc("kundenbestellung_aendern", { p_bestellung_id: editB.id, p_daten }));
+    } else {
+      ({ data, error } = await sb.rpc("kundenbestellung_anlegen", { p_daten }));
+    }
+    submitBtn.disabled = false; submitBtn.textContent = editB ? "Änderung speichern" : "Kundenbestellung senden";
+    if (error){ toast("Konnte nicht speichern: "+error.message,"err"); return; }
+    if (editB){
+      state.editKunde = null;
+      toast("Kundenbestellung "+editB.bestellnr+" geändert.","ok");
+    } else {
+      toast("Kundenbestellung "+(data?.bestellnr||"")+" gesendet.","ok");
+    }
+    await ladeDaten();
+    state.tab = "meine"; state.listenModus = "kunde"; renderApp();
+  });
+
+  // ---- Formular zusammenbauen ----
+  wrap.append(
+    h("div",{class:"card"},
+      h("h3",{text:"Kundendaten",style:"margin-bottom:.8rem"}),
+      h("div",{class:"grid2"},
+        h("div",{}, h("label",{text:"Vorname"}), vornameI),
+        h("div",{}, h("label",{text:"Nachname"}), nachnameI)
+      ),
+      h("div",{class:"grid2",style:"margin-top:.7rem"},
+        h("div",{}, h("label",{text:"E-Mail"}), emailI),
+        h("div",{}, h("label",{text:"Telefon (optional)"}), telefonI)
+      )
+    ),
+    h("div",{class:"card"},
+      h("h3",{text:"Abwicklung",style:"margin-bottom:.8rem"}),
+      h("div",{class:"grid2"},
+        h("div",{}, h("label",{text:"Bezahlart"}), bezahlSel),
+        modusWrap
+      ),
+      abholWrap,
+      lieferWrap,
+      h("div",{class:"grid2",style:"margin-top:.7rem"},
+        h("div",{}, h("label",{text:"Liefer-/Abholdatum"}), liefertagI),
+        lieferzeitWrap
+      ),
+      rechnungWrap
+    ),
+    h("div",{class:"card"},
+      h("h3",{text:"Bestelltext",style:"margin-bottom:.8rem"}),
+      freitextI
+    ),
+    h("div",{style:"margin-top:1rem"}, submitBtn)
+  );
+
+  sync();
 }
 
 // =====================================================================
