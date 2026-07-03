@@ -71,6 +71,25 @@
   .grid2{display:grid; grid-template-columns:1fr 1fr; gap:.7rem}
   @media(max-width:560px){.grid2{grid-template-columns:1fr}}
 
+  /* Tab-Leisten: sauber scrollen statt Scrollbar zeigen */
+  .tabs,.subtabs{scrollbar-width:none; -webkit-overflow-scrolling:touch}
+  .tabs::-webkit-scrollbar,.subtabs::-webkit-scrollbar{display:none}
+
+  /* Verwaltungstabellen: horizontal scrollbar, Spalten bleiben erhalten */
+  .tscroll{-webkit-overflow-scrolling:touch}
+  .tscroll::-webkit-scrollbar{height:8px}
+  .tscroll::-webkit-scrollbar-thumb{background:var(--line); border-radius:8px}
+
+  /* ---- Handy: enger + Tabellen horizontal scrollbar ---- */
+  @media(max-width:560px){
+    .wrap{padding-left:.9rem; padding-right:.9rem}
+    .topbar{gap:.6rem; padding:.7rem .9rem}
+    .brand{font-size:16px}
+    .tab{padding:.6rem .55rem; font-size:13px}
+    .tscroll{overflow-x:auto}
+    .tscroll table.list{min-width:560px}
+  }
+
   /* Login */
   .login{max-width:360px; margin:12vh auto 0; padding:0 1.1rem}
   .login .card{padding:1.6rem}
@@ -937,7 +956,7 @@ function renderGruppen(wrap){
     tbody.append(h("tr",{}, nameCell, h("td",{class:"mono",text:String(anzahl)}), actions));
   }
   tbl.append(tbody);
-  wrap.append(h("div",{class:"card",style:"padding:.6rem"}, tbl));
+  wrap.append(h("div",{class:"card",style:"padding:.6rem"}, h("div",{class:"tscroll"}, tbl)));
 }
 
 // =====================================================================
@@ -1021,9 +1040,11 @@ function renderAbteilungen(wrap){
     ));
   });
   wrap.append(h("div",{class:"card",style:"padding:.6rem"},
-    h("table",{class:"list"},
-      h("thead",{}, h("tr",{}, h("th",{text:"Abteilung"}), h("th",{text:"Kürzel"}), h("th",{text:"Bestellschluss"}), h("th",{text:"Sammelbestellung"}))),
-      tbody
+    h("div",{class:"tscroll"},
+      h("table",{class:"list"},
+        h("thead",{}, h("tr",{}, h("th",{text:"Abteilung"}), h("th",{text:"Kürzel"}), h("th",{text:"Bestellschluss"}), h("th",{text:"Sammelbestellung"}))),
+        tbody
+      )
     ),
     abt.length===0 ? h("div",{class:"empty"},h("div",{class:"muted",text:"Noch keine Abteilungen."})) : null,
     h("div",{class:"muted",style:"font-size:12px;padding:.5rem .5rem 0",
