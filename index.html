@@ -164,6 +164,8 @@ const state = {
   artikelFilter:"",      // Gruppen-Filter in „Artikel erfassen" ("" = alle)
   gruppen:[], artikel:[], bestellungen:[], konten:[],
   cart:{},               // { artikel_id: menge }
+  editBestellung:null,   // aktuell zu ändernde Bestellung (oder null)
+  editProbleme:[],       // Namen inaktiver/entfernter Artikel beim Ändern
 };
 
 const app = document.getElementById("app");
@@ -240,6 +242,7 @@ async function ladeKontoUndStarten(){
 async function logout(){
   await sb.auth.signOut();
   state.konto=null; state.cart={}; state.tab=null; state.subtab=null;
+  state.editBestellung=null; state.editProbleme=[];
   renderLogin();
 }
 
@@ -259,7 +262,7 @@ async function ladeDaten(){
     const b = await sb.from("bestellungen")
       .select(`id,bestellnr,jahr,monat,laufnr,erstellt_am,
                abteilung:konten!bestellungen_abteilung_id_fkey(name,kuerzel),
-               positionen:bestellpositionen(menge, artikel(name))`)
+               positionen:bestellpositionen(menge, artikel_id, artikel(name))`)
       .order("erstellt_am",{ascending:false});
     state.bestellungen = b.data || [];
   }
@@ -333,7 +336,11 @@ function renderApp(){
   const tabs = h("div",{class:"tabs"},
     ...tabDefs.map(([id,label])=>
       h("button",{class:"tab"+(state.tab===id?" active":""),text:label,
-        onclick:()=>{ state.tab=id; renderApp(); }})
+        onclick:()=>{
+          state.tab=id;
+          if (state.editBestellung){ state.editBestellung=null; state.editProbleme=[]; state.cart={}; }
+          renderApp();
+        }})
     )
   );
 
@@ -341,7 +348,7 @@ function renderApp(){
   app.append(topbar, tabs, wrap);
 
   const view = state.tab;
-  if (view==="bestellen")       renderBestellen(wrap);
+  if (view==="bestellen")       renderBestellen(wrap, state.editBestellung);
   else if (view==="meine")      renderBestellungen(wrap, true);
   else if (view==="alle")       renderBestellungen(wrap, false);
   else if (view==="verwaltung") renderVerwaltung(wrap);
@@ -374,15 +381,52 @@ function renderVerwaltung(wrap){
 }
 
 // =====================================================================
-//  Abteilung: Bestellen
+//  Ändern starten: Warenkorb aus bestehender Bestellung vorausfüllen
 // =====================================================================
-function renderBestellen(wrap){
+function starteAendern(b){
+  state.cart = {};
+  const probleme = [];
+  (b.positionen||[]).forEach(p=>{
+    const art = p.artikel_id ? state.artikel.find(a=>a.id===p.artikel_id) : null;
+    if (art && art.aktiv) state.cart[p.artikel_id] = p.menge;
+    else probleme.push(p.artikel?.name || "(entfernter Artikel)");
+  });
+  state.editBestellung = b;
+  state.editProbleme   = probleme;
+  state.tab = "bestellen";
+  renderApp();
+}
+
+// =====================================================================
+//  Abteilung: Bestellen / Ändern
+// =====================================================================
+function renderBestellen(wrap, editB=null){
   const aktive = state.artikel.filter(a=>a.aktiv);
   if (aktive.length===0){
     wrap.append(h("div",{class:"empty"},
       h("div",{class:"big",text:"Noch keine Artikel vorhanden."}),
       h("div",{class:"muted",text:"Die Leitung legt zuerst Artikel an."})));
     return;
+  }
+
+  // Kopf im Ändern-Modus
+  if (editB){
+    wrap.append(h("div",{class:"card",style:"margin-bottom:1rem;display:flex;align-items:center;gap:.8rem"},
+      h("div",{},
+        h("div",{style:"font-weight:600",text:"Bestellung ändern"}),
+        h("div",{class:"mono muted",style:"font-size:13px",text:editB.bestellnr})
+      ),
+      h("button",{class:"btn-ghost btn-sm",style:"margin-left:auto",text:"Abbrechen",
+        onclick:()=>{ state.cart={}; state.editBestellung=null; state.editProbleme=[]; state.tab="meine"; renderApp(); }})
+    ));
+    if (state.editProbleme && state.editProbleme.length){
+      wrap.append(h("div",{class:"card",style:"margin-bottom:1rem;border-color:#5a2f34;background:#2c1c1e"},
+        h("div",{style:"color:#f0c2c7"},
+          h("b",{text:"Hinweis: "}),
+          "Diese ursprünglich bestellten Artikel sind nicht mehr aktiv und wurden nicht übernommen: ",
+          state.editProbleme.join(", "), ".")
+      ));
+    }
   }
 
   const gruppen = [...state.gruppen];
@@ -393,13 +437,11 @@ function renderBestellen(wrap){
   if (schluss){
     const zu = istNachBestellschluss(schluss);
     wrap.append(h("div",{class:"card",
-      style:"padding:.7rem .9rem;margin-bottom:1rem;"+(zu
-        ? "border-color:#5a2f34;background:#2c1c1e"
-        : "")},
+      style:"padding:.7rem .9rem;margin-bottom:1rem;"+(zu ? "border-color:#5a2f34;background:#2c1c1e" : "")},
       zu
         ? h("div",{style:"color:#f0c2c7"},
             h("b",{text:"Bestellschluss "+hhmm(schluss)+" Uhr überschritten."}),
-            " Für heute sind keine Bestellungen mehr möglich.")
+            " Für heute sind keine "+(editB?"Änderungen":"Bestellungen")+" mehr möglich.")
         : h("div",{class:"muted"}, "Bestellschluss heute um ",
             h("b",{style:"color:var(--ink)",text:hhmm(schluss)+" Uhr"}), ".")
     ));
@@ -437,7 +479,7 @@ function renderBestellen(wrap){
 
   // Summenleiste
   const info = h("div",{class:"info"});
-  const sendBtn = h("button",{class:"btn",text:"Bestellung senden"});
+  const sendBtn = h("button",{class:"btn",text: editB ? "Änderung speichern" : "Bestellung senden"});
   const bar = h("div",{class:"summary"}, info, sendBtn);
   document.body.append(bar);
 
@@ -463,13 +505,25 @@ function renderBestellen(wrap){
     const positionen = Object.entries(state.cart)
       .filter(([,n])=>n>0).map(([artikel_id,menge])=>({artikel_id, menge}));
     if (positionen.length===0) return;
-    sendBtn.disabled=true; sendBtn.textContent="Senden…";
-    const { data, error } = await sb.rpc("bestellung_anlegen", { positionen });
-    sendBtn.disabled=false; sendBtn.textContent="Bestellung senden";
-    if (error){ toast("Konnte nicht senden: "+error.message,"err"); return; }
+    sendBtn.disabled=true; sendBtn.textContent = editB ? "Speichern…" : "Senden…";
+
+    let data, error;
+    if (editB){
+      ({ data, error } = await sb.rpc("bestellung_aendern", { p_bestellung_id: editB.id, positionen }));
+    } else {
+      ({ data, error } = await sb.rpc("bestellung_anlegen", { positionen }));
+    }
+
+    sendBtn.disabled=false; sendBtn.textContent = editB ? "Änderung speichern" : "Bestellung senden";
+    if (error){ toast("Konnte nicht speichern: "+error.message,"err"); return; }
     bar.remove();
     state.cart={};
-    toast("Bestellung "+ (data?.bestellnr||"") + " gesendet.","ok");
+    if (editB){
+      state.editBestellung=null; state.editProbleme=[];
+      toast("Bestellung "+editB.bestellnr+" geändert.","ok");
+    } else {
+      toast("Bestellung "+ (data?.bestellnr||"") + " gesendet.","ok");
+    }
     await ladeDaten();
     state.tab="meine"; renderApp();
   });
@@ -487,6 +541,8 @@ function renderBestellen(wrap){
 function renderBestellungen(wrap, meineNur){
   const rolle = state.konto.rolle;
   const darfLoeschen = rolle==="admin" || rolle==="leitung";
+  const darfDrucken  = rolle==="admin" || rolle==="leitung" || rolle==="konditorei";
+  const darfAendern  = rolle==="abteilung" && meineNur;
   const zeigeAbteilung = !meineNur; // in "alle" auch die Abteilung zeigen
 
   let liste = state.bestellungen;
@@ -540,8 +596,12 @@ function renderBestellungen(wrap, meineNur){
           h("span",{class:"n",text:p.artikel?.name || "(Artikel entfernt)"})
         ));
       });
+      const zu = istNachBestellschluss(state.konto.bestellschluss);
       const actions = h("div",{class:"ticket-actions"},
-        h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeBestellung(b)}),
+        darfAendern ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
+          ...(zu ? {disabled:"disabled", style:"opacity:.5"} : {}),
+          onclick:()=>starteAendern(b)}) : null,
+        darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeBestellung(b)}) : null,
         darfLoeschen ? h("button",{class:"btn-danger btn-sm",text:"Löschen",
           onclick:()=>loescheBestellung(b)}) : null
       );
