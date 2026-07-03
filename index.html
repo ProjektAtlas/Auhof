@@ -209,6 +209,8 @@ const state = {
   editKunde:null,        // aktuell zu ändernde Kundenbestellung (oder null)
   listenModus:"abteilung", // Umschalter in den Listen: "abteilung" | "kunde"
   bestellTag:null,       // gewählter Tag in "Bestellungen" (YYYY-MM-DD), null = heute
+  auswVon:null, auswBis:null, // Zeitraum in "Auswertung" (YYYY-MM-DD), null = heute
+  auswAbt:"",            // Abteilungsfilter (Kürzel) in "Auswertung", "" = alle
 };
 
 const app = document.getElementById("app");
@@ -306,6 +308,7 @@ async function logout(){
   state.editBestellung=null; state.editProbleme=[];
   state.editKunde=null; state.listenModus="abteilung";
   state.kundenbestellungen=[]; state.abteilungenListe=[];
+  state.auswVon=null; state.auswBis=null; state.auswAbt="";
   renderLogin();
 }
 
@@ -353,8 +356,8 @@ async function ladeDaten(){
 function tabsFor(rolle){
   if (rolle==="abteilung") return [["bestellen","Bestellen"],["kunde","Kundenbestellung"],["meine","Meine Bestellungen"]];
   if (rolle==="konditorei") return [["alle","Bestellungen"]];
-  if (rolle==="leitung")   return [["alle","Bestellungen"],["verwaltung", ROLLE_LABEL.leitung]];
-  if (rolle==="admin")     return [["alle","Bestellungen"],["verwaltung", ROLLE_LABEL.admin]];
+  if (rolle==="leitung")   return [["alle","Bestellungen"],["auswertung","Auswertung"],["verwaltung", ROLLE_LABEL.leitung]];
+  if (rolle==="admin")     return [["alle","Bestellungen"],["auswertung","Auswertung"],["verwaltung", ROLLE_LABEL.admin]];
   return [];
 }
 
@@ -430,6 +433,7 @@ function renderApp(){
   else if (view==="kunde")      renderKundeFormular(wrap, state.editKunde);
   else if (view==="meine")      renderBestellungen(wrap, true);
   else if (view==="alle")       renderBestellungen(wrap, false);
+  else if (view==="auswertung") renderAuswertung(wrap);
   else if (view==="verwaltung") renderVerwaltung(wrap);
 }
 
@@ -1518,6 +1522,216 @@ function renderAbteilungen(wrap){
     ),
     h("div",{style:"margin-top:.8rem"}, pwBtn)
   ));
+}
+
+// =====================================================================
+//  Auswertung (Leitung/Admin): Zeitraum + Abteilungsfilter
+//  Zeigt pro Abteilung -> Gruppe -> Artikel die summierten Mengen
+//  aus den ABTEILUNGSbestellungen im gewählten Zeitraum, plus Total.
+// =====================================================================
+
+// Reines Datum um n Tage verschieben (UTC-basiert, ohne Zeitzonen-Drift)
+function tagPlus(ymd, delta){
+  const d = new Date(ymd + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0,10);
+}
+
+// Aggregiert Bestellungen -> [{ name, total, groups:[{name, arts:[{name,menge}]}] }]
+function baueAuswertung(orders){
+  const artById = new Map(state.artikel.map(a=>[a.id, a]));
+  const grpById = new Map(state.gruppen.map(g=>[g.id, g]));
+  const depts = new Map();
+
+  for (const b of orders){
+    const dName = b.abteilung?.name || b.abteilung?.kuerzel || "—";
+    const dKey  = b.abteilung?.kuerzel || b.abteilung?.name || "—";
+    if (!depts.has(dKey)) depts.set(dKey, { name:dName, total:0, groups:new Map() });
+    const dep = depts.get(dKey);
+
+    for (const p of (b.positionen||[])){
+      const menge = Number(p.menge) || 0;
+      if (menge <= 0) continue;
+      const art     = p.artikel_id ? artById.get(p.artikel_id) : null;
+      const artName = art?.name || p.artikel?.name || "(entfernter Artikel)";
+      const grpId   = art?.gruppe_id || null;
+      const grp     = grpId ? grpById.get(grpId) : null;
+      const gKey    = grp ? String(grp.id) : "__none__";
+      const gName   = grp ? grp.name : "Ohne Gruppe";
+      const gSort   = grp ? (grp.sortierung ?? 9999) : 100000;   // „Ohne Gruppe" zuletzt
+
+      if (!dep.groups.has(gKey)) dep.groups.set(gKey, { name:gName, sort:gSort, arts:new Map() });
+      const gg   = dep.groups.get(gKey);
+      const aKey = p.artikel_id || ("name:"+artName);
+      if (!gg.arts.has(aKey)) gg.arts.set(aKey, { name:artName, menge:0 });
+      gg.arts.get(aKey).menge += menge;
+      dep.total += menge;
+    }
+  }
+
+  return [...depts.values()]
+    .map(d=>({
+      name: d.name,
+      total: d.total,
+      groups: [...d.groups.values()]
+        .sort((a,b)=> a.sort-b.sort || a.name.localeCompare(b.name))
+        .map(g=>({ name:g.name, arts:[...g.arts.values()].sort((x,y)=>x.name.localeCompare(y.name)) }))
+    }))
+    .sort((a,b)=> a.name.localeCompare(b.name));
+}
+
+function renderAuswertung(wrap){
+  if (!state.auswVon) state.auswVon = heuteZuerich();
+  if (!state.auswBis) state.auswBis = heuteZuerich();
+
+  const vonI = h("input",{type:"date",style:"max-width:170px",value:state.auswVon});
+  const bisI = h("input",{type:"date",style:"max-width:170px",value:state.auswBis});
+
+  const abtSel = h("select",{style:"max-width:220px"});
+  abtSel.append(h("option",{value:"",text:"Alle Abteilungen"}));
+  const abteilungen = state.konten.filter(k=>k.rolle==="abteilung")
+    .sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  abteilungen.forEach(k=>abtSel.append(
+    h("option",{value:k.kuerzel||k.name, text:k.name+(k.kuerzel?" ("+k.kuerzel+")":"")})
+  ));
+  abtSel.value = state.auswAbt || "";
+
+  const printBtn = h("button",{class:"btn btn-sm",text:"Drucken"});
+  const infoLbl  = h("div",{class:"muted",style:"font-size:13px"});
+
+  wrap.append(h("div",{class:"row",style:"margin-bottom:1rem;align-items:flex-end"},
+    h("div",{}, h("label",{text:"Von"}), vonI),
+    h("div",{}, h("label",{text:"Bis"}), bisI),
+    h("div",{}, h("label",{text:"Abteilung"}), abtSel),
+    h("div",{style:"margin-left:auto;display:flex;align-items:center;gap:.7rem"}, infoLbl, printBtn)
+  ));
+
+  const box = h("div",{});
+  wrap.append(box);
+
+  let rangeRoh = [];          // im Zeitraum geladene Abteilungsbestellungen (ungefiltert nach Abt.)
+  let letzteDaten = [];       // zuletzt gezeichnete Aggregation (für den Druck)
+
+  async function ladeZeitraum(){
+    const von = state.auswVon, bis = state.auswBis;
+    clear(box);
+    if (von > bis){
+      infoLbl.textContent = "";
+      printBtn.disabled = true; printBtn.style.opacity = .5;
+      box.append(h("div",{class:"empty"},
+        h("div",{class:"muted",text:"Das «Von»-Datum liegt nach dem «Bis»-Datum."})));
+      return;
+    }
+    infoLbl.textContent = "Lädt…";
+    box.append(h("div",{class:"empty"}, h("div",{class:"muted",text:"Lädt…"})));
+
+    // Etwas breiter laden (± 1 Tag, wegen Zeitzone), danach exakt nach Zürich-Tag filtern.
+    const { data, error } = await sb.from("bestellungen")
+      .select(`id,bestellnr,erstellt_am,
+               abteilung:konten!bestellungen_abteilung_id_fkey(name,kuerzel),
+               positionen:bestellpositionen(menge, artikel_id, artikel(name))`)
+      .gte("erstellt_am", tagPlus(von,-1)+"T00:00:00Z")
+      .lte("erstellt_am", tagPlus(bis, 1)+"T23:59:59Z")
+      .order("erstellt_am",{ascending:false});
+
+    clear(box);
+    if (error){
+      infoLbl.textContent = "";
+      box.append(h("div",{class:"empty"}, h("div",{class:"muted",text:"Konnte nicht laden: "+error.message})));
+      return;
+    }
+    rangeRoh = (data||[]).filter(b=>{
+      const d = zurichDatum(b.erstellt_am);
+      return d >= von && d <= bis;
+    });
+    zeichne();
+  }
+
+  function zeichne(){
+    clear(box);
+    const gefiltert = state.auswAbt
+      ? rangeRoh.filter(b=>(b.abteilung?.kuerzel||b.abteilung?.name) === state.auswAbt)
+      : rangeRoh;
+
+    const daten = baueAuswertung(gefiltert);
+    letzteDaten = daten;
+
+    const anzAbt = daten.length;
+    infoLbl.textContent = anzAbt===0 ? "Keine Bestellungen"
+      : (anzAbt + (anzAbt===1 ? " Abteilung" : " Abteilungen"));
+    printBtn.disabled = anzAbt===0;
+    printBtn.style.opacity = anzAbt===0 ? .5 : 1;
+
+    if (anzAbt===0){
+      box.append(h("div",{class:"empty"},
+        h("div",{class:"muted",text:"Für diesen Zeitraum gibt es keine Abteilungsbestellungen."})));
+      return;
+    }
+
+    for (const d of daten){
+      const kopf = h("div",{class:"ticket-top"},
+        h("h3",{style:"font-size:16px",text:d.name}),
+        h("span",{class:"ticket-meta mono",text:d.total+" Stück gesamt"})
+      );
+      const body = h("div",{class:"ticket-body"});
+      for (const g of d.groups){
+        body.append(h("div",{class:"group-h",style:"margin:.8rem 0 .3rem"},
+          h("h3",{style:"font-size:14px;color:var(--dim)",text:g.name})));
+        g.arts.forEach(a=>{
+          body.append(h("div",{class:"pos"},
+            h("span",{class:"m",text:String(a.menge)}),
+            h("span",{class:"n",text:a.name})
+          ));
+        });
+      }
+      box.append(h("div",{class:"ticket"}, kopf, body));
+    }
+  }
+
+  vonI.addEventListener("change",()=>{
+    if (!vonI.value) vonI.value = heuteZuerich();
+    state.auswVon = vonI.value; ladeZeitraum();
+  });
+  bisI.addEventListener("change",()=>{
+    if (!bisI.value) bisI.value = heuteZuerich();
+    state.auswBis = bisI.value; ladeZeitraum();
+  });
+  abtSel.addEventListener("change",()=>{ state.auswAbt = abtSel.value; zeichne(); });
+  printBtn.addEventListener("click",()=>druckeAuswertung(letzteDaten));
+
+  ladeZeitraum();
+}
+
+// Druck der Auswertung: pro Abteilung -> Gruppe -> Artikel (+ Abteilungs-Total)
+function druckeAuswertung(daten){
+  if (!daten || daten.length===0){ toast("Keine Daten zum Drucken.","err"); return; }
+  const area = document.getElementById("print-area");
+  clear(area);
+
+  const abtName = state.auswAbt || "Alle Abteilungen";
+  area.append(
+    h("h2",{text:"Auhof — Auswertung"}),
+    h("div",{style:"margin-top:6px",text:"Zeitraum: "+fmtTag(state.auswVon)+" – "+fmtTag(state.auswBis)}),
+    h("div",{style:"color:#555",text:"Abteilung: "+abtName})
+  );
+
+  for (const d of daten){
+    const sec = h("div",{class:"p-sub"},
+      h("div",{style:"font-weight:700;font-size:15px",text:d.name})
+    );
+    for (const g of d.groups){
+      sec.append(h("div",{style:"margin-top:8px;font-weight:600",text:g.name}));
+      sec.append(h("table",{},
+        ...g.arts.map(a=>h("tr",{},
+          h("td",{class:"pm",text:String(a.menge)}),
+          h("td",{text:a.name})
+        ))
+      ));
+    }
+    sec.append(h("div",{style:"margin-top:6px;font-weight:700",text:"Total "+d.name+": "+d.total+" Stück"}));
+    area.append(sec);
+  }
+  window.print();
 }
 
 // =====================================================================
