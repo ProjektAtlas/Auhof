@@ -180,15 +180,16 @@
     #print-area .p-ft-h{margin-top:12px; font-weight:700}
 
     /* ---- Eventbestellung: Druck im Vorlagen-Stil ---- */
-    #print-area .ev-head{position:relative; min-height:70px; margin-bottom:18px}
-    #print-area .ev-logo{position:absolute; top:0; right:0; width:190px; height:auto}
-    #print-area .ev-title{font-family:'Space Grotesk'; font-weight:700; font-size:22px;
-      text-align:center; padding:6px 210px 0; word-break:break-word}
-    #print-area .ev-row{display:flex; gap:16px; padding:3px 0; font-size:14px}
+    #print-area .ev-head{text-align:right; margin-bottom:4px}
+    #print-area .ev-logo{width:190px; height:auto; display:inline-block}
+    #print-area .ev-title{font-family:'Space Grotesk'; font-weight:700; font-size:24px;
+      text-align:center; margin:10px 0 32px; word-break:break-word}
+    #print-area .ev-row{display:flex; gap:16px; padding:1px 0; font-size:14px}
     #print-area .ev-row .ev-k{width:150px; flex-shrink:0}
     #print-area .ev-row .ev-v{white-space:pre-wrap}
-    #print-area .ev-block-h{margin-top:14px; font-weight:400}
-    #print-area .ev-block{white-space:pre-wrap; margin-top:2px}
+    #print-area .ev-gap{height:14px}
+    #print-area .ev-block-h{font-size:14px; font-weight:400}
+    #print-area .ev-block{white-space:pre-wrap; font-size:14px; margin:8px 0 0 166px}
   }
 </style>
 </head>
@@ -1104,30 +1105,42 @@ function eventInfoPaare(b){
 }
 
 // Druckseite im Stil der Vorlage: Logo oben rechts, Titel = Bestellnr.
-// (Location erscheint bereits im Titel und wird nicht als eigene Zeile wiederholt.)
+// Druckseite im Stil der Vorlage: Logo oben rechts, darunter der Titel (Bestellnr).
 function eventDruckSeite(b){
   const seite = h("div",{class:"p-page"});
 
+  // Logo oben rechts (eigene Zeile), darunter der Titel zentriert über volle Breite
   seite.append(h("div",{class:"ev-head"},
-    h("img",{class:"ev-logo",src:LOGO_DATAURL,alt:"auhof"}),
-    h("div",{class:"ev-title",text:b.bestellnr})
+    h("img",{class:"ev-logo",src:LOGO_DATAURL,alt:"auhof"})
   ));
+  seite.append(h("div",{class:"ev-title",text:b.bestellnr}));
 
   const row = (k,v)=> h("div",{class:"ev-row"},
     h("div",{class:"ev-k",text:k}), h("div",{class:"ev-v",text:v}));
+  const gap = ()=> h("div",{class:"ev-gap"});
 
+  // Gruppe: Veranstaltung + Location
   seite.append(row("Veranstaltung:", b.veranstaltung||""));
+  seite.append(row("Location:", b.location||""));
+
+  // Gruppe: Datum + Uhrzeit
+  seite.append(gap());
   seite.append(row("Datum:", fmtTagLang(b.datum)));
   if (b.uhrzeit) seite.append(row("Uhrzeit:", hhmm(b.uhrzeit)+" Uhr"));
-  const pers = eventPersonenText(b, "\n");
-  if (pers) seite.append(row("Personenanzahl:", pers));
 
+  // Gruppe: Personenanzahl (Erwachsene / Kinder auf zwei Zeilen)
+  const pers = eventPersonenText(b, "\n");
+  if (pers){ seite.append(gap()); seite.append(row("Personenanzahl:", pers)); }
+
+  // Gruppe: Bestelltext (Label links, Text zur Wertespalte eingerückt)
   if (b.freitext){
+    seite.append(gap());
     seite.append(h("div",{class:"ev-block-h",text:"Bestelltext:"}));
     seite.append(h("div",{class:"ev-block",text:b.freitext}));
   }
-  if (b.hinweis)               seite.append(row("Hinweis:", b.hinweis));
-  if (b.konditorei_bestellung) seite.append(row("Aus der Konditorei:", b.konditorei_bestellung));
+
+  if (b.hinweis){ seite.append(gap()); seite.append(row("Hinweis:", b.hinweis)); }
+  if (b.konditorei_bestellung){ seite.append(gap()); seite.append(row("Aus der Konditorei:", b.konditorei_bestellung)); }
 
   return seite;
 }
