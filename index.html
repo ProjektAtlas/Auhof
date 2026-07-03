@@ -290,7 +290,7 @@ async function ladeKontoUndStarten(){
   const { data:{ user } } = await sb.auth.getUser();
   if (!user) return { error:"Nicht angemeldet." };
   const { data:konto, error } = await sb.from("konten")
-    .select("id,name,rolle,kuerzel,bestellschluss").eq("id", user.id).single();
+    .select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde").eq("id", user.id).single();
   if (error || !konto){
     await sb.auth.signOut();
     return { error:"Für dieses Konto ist noch kein Zugang eingerichtet." };
@@ -345,7 +345,7 @@ async function ladeDaten(){
   state.abteilungenListe = al.data || [];
 
   if (r==="admin" || r==="leitung"){
-    const k = await sb.from("konten").select("id,name,rolle,kuerzel,bestellschluss,sammelbestellung").order("rolle").order("name");
+    const k = await sb.from("konten").select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde,sammelbestellung").order("rolle").order("name");
     state.konten = k.data || [];
   }
 }
@@ -797,7 +797,7 @@ function renderBestellungen(wrap, meineNur){
         h("span",{class:"k",text:"Bestelltext"}),
         h("span",{class:"v",text:b.freitext||""})));
 
-      const zu = istNachBestellschluss(state.konto.bestellschluss);
+      const zu = istNachBestellschluss(state.konto.bestellschluss_kunde);
       const actions = h("div",{class:"ticket-actions"},
         (b.bezahlart==="vor_ort" && darfBezahltSetzen) ? bezahltToggleBtn(b) : null,
         darfAendernAbt ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
@@ -1012,8 +1012,8 @@ function renderKundeFormular(wrap, editB=null){
     ));
   }
 
-  // Bestellschluss-Hinweis / -Sperre
-  const schluss = state.konto.bestellschluss;
+  // Bestellschluss-Hinweis / -Sperre (eigener Kunden-Bestellschluss)
+  const schluss = state.konto.bestellschluss_kunde;
   const gesperrt = istNachBestellschluss(schluss);
   if (schluss){
     wrap.append(h("div",{class:"card",
@@ -1112,7 +1112,7 @@ function renderKundeFormular(wrap, editB=null){
 
   submitBtn.addEventListener("click", async ()=>{
     readForm();
-    if (istNachBestellschluss(state.konto.bestellschluss))
+    if (istNachBestellschluss(state.konto.bestellschluss_kunde))
       return toast("Bestellschluss überschritten – heute nicht mehr möglich.","err");
     if (!f.vorname || !f.nachname) return toast("Vor- und Nachname sind Pflicht.","err");
     if (!f.email || f.email.indexOf("@") < 1) return toast("Eine gültige E-Mail-Adresse ist Pflicht.","err");
@@ -1437,17 +1437,25 @@ function renderAbteilungen(wrap){
   const abt = state.konten.filter(k=>k.rolle==="abteilung");
   const tbody = h("tbody",{});
   abt.forEach(k=>{
-    const zeitI = h("input",{type:"time",value:hhmm(k.bestellschluss),style:"max-width:130px"});
-    const saveBtn = h("button",{class:"btn btn-sm",text:"Speichern",onclick:async ()=>{
-      saveBtn.disabled=true; saveBtn.textContent="…";
-      const { error } = await rufeFunktion({aktion:"bestellschluss_setzen", id:k.id, bestellschluss: zeitI.value || null});
-      saveBtn.disabled=false; saveBtn.textContent="Speichern";
-      if (error){ toast(error,"err"); return; }
-      toast(zeitI.value
-        ? ('Bestellschluss für „'+k.name+'“: '+zeitI.value+' Uhr.')
-        : ('Bestellschluss für „'+k.name+'“ entfernt.'),"ok");
-      await ladeDaten(); renderApp();
-    }});
+    // Ein Zeitfeld + Speichern-Knopf für je einen Bestellschluss.
+    //   feld: "abteilung" -> Abteilungsbestellungen, "kunde" -> Kundenbestellungen
+    function schlussZelle(feld, aktuellerWert){
+      const zeitI = h("input",{type:"time",value:hhmm(aktuellerWert),style:"max-width:130px"});
+      const saveBtn = h("button",{class:"btn btn-sm",text:"Speichern",onclick:async ()=>{
+        saveBtn.disabled=true; saveBtn.textContent="…";
+        const { error } = await rufeFunktion({aktion:"bestellschluss_setzen", id:k.id, feld, bestellschluss: zeitI.value || null});
+        saveBtn.disabled=false; saveBtn.textContent="Speichern";
+        if (error){ toast(error,"err"); return; }
+        const was = (feld==="kunde") ? "Kunden-Bestellschluss" : "Bestellschluss";
+        toast(zeitI.value
+          ? (was+' für „'+k.name+'“: '+zeitI.value+' Uhr.')
+          : (was+' für „'+k.name+'“ entfernt.'),"ok");
+        await ladeDaten(); renderApp();
+      }});
+      return h("td",{}, h("div",{class:"row"}, zeitI, saveBtn));
+    }
+    const zelleAbt   = schlussZelle("abteilung", k.bestellschluss);
+    const zelleKunde = schlussZelle("kunde",     k.bestellschluss_kunde);
 
     // Sammelbestellung: Haken speichert sofort (ohne Re-Render)
     const sammelCb = h("input",{type:"checkbox",style:"width:auto;margin:0;cursor:pointer"});
@@ -1467,20 +1475,24 @@ function renderAbteilungen(wrap){
     tbody.append(h("tr",{},
       h("td",{text:k.name}),
       h("td",{class:"mono",text:k.kuerzel||"—"}),
-      h("td",{}, h("div",{class:"row"}, zeitI, saveBtn)),
+      zelleAbt,
+      zelleKunde,
       h("td",{style:"text-align:center"}, sammelCb)
     ));
   });
   wrap.append(h("div",{class:"card",style:"padding:.6rem"},
     h("div",{class:"tscroll"},
       h("table",{class:"list"},
-        h("thead",{}, h("tr",{}, h("th",{text:"Abteilung"}), h("th",{text:"Kürzel"}), h("th",{text:"Bestellschluss"}), h("th",{text:"Sammelbestellung"}))),
+        h("thead",{}, h("tr",{},
+          h("th",{text:"Abteilung"}), h("th",{text:"Kürzel"}),
+          h("th",{text:"Bestellschluss Abteilung"}), h("th",{text:"Bestellschluss Kunden"}),
+          h("th",{text:"Sammelbestellung"}))),
         tbody
       )
     ),
     abt.length===0 ? h("div",{class:"empty"},h("div",{class:"muted",text:"Noch keine Abteilungen."})) : null,
     h("div",{class:"muted",style:"font-size:12px;padding:.5rem .5rem 0",
-      text:"Keine Zeit eingetragen = kein Bestellschluss (Bestellungen 24h möglich). Die Zeit gilt täglich. Sammelbestellung: Haken = Tagesbestellungen werden beim „Tag drucken“ pro Abteilung auf einem Blatt zusammengefasst."})
+      text:"Keine Zeit eingetragen = kein Bestellschluss (rund um die Uhr möglich). Die Zeit gilt täglich. „Bestellschluss Abteilung“ betrifft die Abteilungsbestellungen, „Bestellschluss Kunden“ die Kundenbestellungen – beide sind voneinander unabhängig. Sammelbestellung: Haken = Tagesbestellungen werden beim „Tag drucken“ pro Abteilung auf einem Blatt zusammengefasst."})
   ));
 
   // --- Passwort setzen (jedes Konto) ---
