@@ -202,12 +202,14 @@ const state = {
   artikelFilter:"",      // Gruppen-Filter in „Artikel erfassen" ("" = alle)
   gruppen:[], artikel:[], bestellungen:[], konten:[],
   kundenbestellungen:[], // Bestellart "Kunden" (Freitext)
+  eventbestellungen:[],  // Bestellart "Event" (nur Leitung/Admin)
   abteilungenListe:[],   // {id,name,kuerzel} aller Abteilungen (für Abhol-Auswahl)
   cart:{},               // { artikel_id: menge }
   editBestellung:null,   // aktuell zu ändernde Abteilungsbestellung (oder null)
   editProbleme:[],       // Namen inaktiver/entfernter Artikel beim Ändern
   editKunde:null,        // aktuell zu ändernde Kundenbestellung (oder null)
-  listenModus:"abteilung", // Umschalter in den Listen: "abteilung" | "kunde"
+  editEvent:null,        // aktuell zu ändernde Eventbestellung (oder null)
+  listenModus:"abteilung", // Umschalter in den Listen: "abteilung" | "kunde" | "event"
   bestellTag:null,       // gewählter Tag in "Bestellungen" (YYYY-MM-DD), null = heute
   auswVon:null, auswBis:null, // Zeitraum in "Auswertung" (YYYY-MM-DD), null = heute
   auswAbt:"",            // Abteilungsfilter (Kürzel) in "Auswertung", "" = alle
@@ -306,8 +308,8 @@ async function logout(){
   await sb.auth.signOut();
   state.konto=null; state.cart={}; state.tab=null; state.subtab=null;
   state.editBestellung=null; state.editProbleme=[];
-  state.editKunde=null; state.listenModus="abteilung";
-  state.kundenbestellungen=[]; state.abteilungenListe=[];
+  state.editKunde=null; state.editEvent=null; state.listenModus="abteilung";
+  state.kundenbestellungen=[]; state.eventbestellungen=[]; state.abteilungenListe=[];
   state.auswVon=null; state.auswBis=null; state.auswAbt="";
   renderLogin();
 }
@@ -347,6 +349,13 @@ async function ladeDaten(){
   const al = await sb.rpc("abteilungen_liste");
   state.abteilungenListe = al.data || [];
 
+  // Eventbestellungen (nur Leitung/Admin/Konditorei sehen sie)
+  state.eventbestellungen = [];
+  if (r==="admin" || r==="leitung" || r==="konditorei"){
+    const eb = await sb.from("eventbestellungen").select("*").order("erstellt_am",{ascending:false});
+    state.eventbestellungen = eb.data || [];
+  }
+
   if (r==="admin" || r==="leitung"){
     const k = await sb.from("konten").select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde,sammelbestellung").order("rolle").order("name");
     state.konten = k.data || [];
@@ -356,8 +365,8 @@ async function ladeDaten(){
 function tabsFor(rolle){
   if (rolle==="abteilung") return [["bestellen","Bestellen"],["kunde","Kundenbestellung"],["meine","Meine Bestellungen"]];
   if (rolle==="konditorei") return [["alle","Bestellungen"]];
-  if (rolle==="leitung")   return [["alle","Bestellungen"],["auswertung","Auswertung"],["verwaltung", ROLLE_LABEL.leitung]];
-  if (rolle==="admin")     return [["alle","Bestellungen"],["auswertung","Auswertung"],["verwaltung", ROLLE_LABEL.admin]];
+  if (rolle==="leitung")   return [["alle","Bestellungen"],["event","Bestellen Event"],["auswertung","Auswertung"],["verwaltung", ROLLE_LABEL.leitung]];
+  if (rolle==="admin")     return [["alle","Bestellungen"],["event","Bestellen Event"],["auswertung","Auswertung"],["verwaltung", ROLLE_LABEL.admin]];
   return [];
 }
 
@@ -420,6 +429,7 @@ function renderApp(){
           state.tab=id;
           if (state.editBestellung){ state.editBestellung=null; state.editProbleme=[]; state.cart={}; }
           if (state.editKunde){ state.editKunde=null; }
+          if (state.editEvent){ state.editEvent=null; }
           renderApp();
         }})
     )
@@ -431,6 +441,7 @@ function renderApp(){
   const view = state.tab;
   if (view==="bestellen")       renderBestellen(wrap, state.editBestellung);
   else if (view==="kunde")      renderKundeFormular(wrap, state.editKunde);
+  else if (view==="event")      renderEventFormular(wrap, state.editEvent);
   else if (view==="meine")      renderBestellungen(wrap, true);
   else if (view==="alle")       renderBestellungen(wrap, false);
   else if (view==="auswertung") renderAuswertung(wrap);
@@ -632,9 +643,11 @@ function renderBestellungen(wrap, meineNur){
   const darfBezahltSetzen = (rolle==="abteilung" && meineNur)
     || rolle==="konditorei" || rolle==="leitung" || rolle==="admin";
 
-  if (state.listenModus!=="kunde") state.listenModus = "abteilung";
+  const darfEvent = !meineNur; // Event-Umschalter nur in „alle" (Leitung/Admin/Konditorei)
+  const gueltigeModi = darfEvent ? ["abteilung","kunde","event"] : ["abteilung","kunde"];
+  if (!gueltigeModi.includes(state.listenModus)) state.listenModus = "abteilung";
 
-  // ---- Umschalter Abteilung <-> Kunde ----
+  // ---- Umschalter Abteilung <-> Kunde <-> Event ----
   function segLeiste(){
     return h("div",{class:"seg",style:"margin-bottom:1.1rem"},
       h("button",{class:"seg-btn"+(state.listenModus==="abteilung"?" active":""),
@@ -642,7 +655,10 @@ function renderBestellungen(wrap, meineNur){
         onclick:()=>{ if(state.listenModus!=="abteilung"){ state.listenModus="abteilung"; renderApp(); } }}),
       h("button",{class:"seg-btn"+(state.listenModus==="kunde"?" active":""),
         text:"Kundenbestellungen",
-        onclick:()=>{ if(state.listenModus!=="kunde"){ state.listenModus="kunde"; renderApp(); } }})
+        onclick:()=>{ if(state.listenModus!=="kunde"){ state.listenModus="kunde"; renderApp(); } }}),
+      darfEvent ? h("button",{class:"seg-btn"+(state.listenModus==="event"?" active":""),
+        text:"Eventbestellungen",
+        onclick:()=>{ if(state.listenModus!=="event"){ state.listenModus="event"; renderApp(); } }}) : null
     );
   }
 
@@ -657,6 +673,18 @@ function renderBestellungen(wrap, meineNur){
       zeichneAbtListe(container, state.bestellungen, "Noch keine Abteilungsbestellungen.");
     else
       zeichneKundeListe(container, state.kundenbestellungen, "Noch keine Kundenbestellungen.");
+    return;
+  }
+
+  // =========================================================
+  //  "alle" · Event-Umschalter: eigene, einfache Ansicht
+  //  (kein Tages-/Abteilungsfilter; Events gehören keiner Abteilung an)
+  // =========================================================
+  if (state.listenModus==="event"){
+    wrap.append(segLeiste());
+    const container = h("div",{});
+    wrap.append(container);
+    zeichneEventListe(container, state.eventbestellungen||[], "Noch keine Eventbestellungen.");
     return;
   }
 
@@ -830,6 +858,49 @@ function renderBestellungen(wrap, meineNur){
     toast("Kundenbestellung "+b.bestellnr+" gelöscht.","ok");
     await ladeDaten(); renderApp();
   }
+
+  // ---- Liste: Eventbestellungen ----
+  function zeichneEventListe(container, daten, leerText){
+    clear(container);
+    if (daten.length===0){
+      container.append(h("div",{class:"empty"}, h("div",{class:"muted",text:leerText||"Keine Eventbestellungen."})));
+      return;
+    }
+    const darfEventAendern = rolle==="admin" || rolle==="leitung";
+    for (const b of daten){
+      const top = h("div",{class:"ticket-top"},
+        h("span",{class:"ticket-nr",text:b.bestellnr}),
+        h("span",{class:"muted",style:"font-size:13px",text:b.veranstaltung||""}),
+        h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
+      );
+      const body = h("div",{class:"ticket-body"});
+      eventInfoPaare(b).forEach(([k,v])=>{
+        body.append(h("div",{class:"kv"}, h("span",{class:"k",text:k}), h("span",{class:"v",text:v})));
+      });
+      [["Bestelltext",b.freitext],["Hinweis",b.hinweis],["Bestellung Konditorei",b.konditorei_bestellung]]
+        .forEach(([k,v])=>{
+          if (!v) return;
+          body.append(h("div",{class:"kv-div"}));
+          body.append(h("div",{class:"kv"}, h("span",{class:"k",text:k}), h("span",{class:"v",text:v})));
+        });
+      const actions = h("div",{class:"ticket-actions"},
+        darfEventAendern ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
+          onclick:()=>starteEventAendern(b)}) : null,
+        darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeEventBestellung(b)}) : null,
+        darfLoeschen ? h("button",{class:"btn-danger btn-sm",text:"Löschen",
+          onclick:()=>loescheEventBestellung(b)}) : null
+      );
+      container.append(h("div",{class:"ticket"}, top, body, actions));
+    }
+  }
+
+  async function loescheEventBestellung(b){
+    if (!confirm("Eventbestellung "+b.bestellnr+" wirklich löschen?")) return;
+    const { error } = await sb.from("eventbestellungen").delete().eq("id", b.id);
+    if (error){ toast("Löschen fehlgeschlagen: "+error.message,"err"); return; }
+    toast("Eventbestellung "+b.bestellnr+" gelöscht.","ok");
+    await ladeDaten(); renderApp();
+  }
 }
 
 function druckeBestellung(b){
@@ -983,6 +1054,55 @@ function druckeKundeBestellung(b){
 function starteKundeAendern(b){
   state.editKunde = b;
   state.tab = "kunde";
+  renderApp();
+}
+
+// =====================================================================
+//  Eventbestellung: Infozeilen, Druck, Ändern starten
+// =====================================================================
+function eventInfoPaare(b){
+  const paare = [];
+  paare.push(["Veranstaltung", b.veranstaltung||""]);
+  paare.push(["Datum", fmtTag(b.datum)]);
+  if (b.uhrzeit) paare.push(["Uhrzeit", hhmm(b.uhrzeit)+" Uhr"]);
+  paare.push(["Location", b.location||""]);
+  if (b.personenanzahl!=null && String(b.personenanzahl)!=="")
+    paare.push(["Personenanzahl", String(b.personenanzahl)]);
+  return paare;
+}
+
+function eventDruckSeite(b){
+  const infoTbl = h("table",{},
+    ...eventInfoPaare(b).map(([k,v])=> h("tr",{},
+      h("td",{class:"pk",text:k}),
+      h("td",{text:v})
+    ))
+  );
+  const seite = h("div",{class:"p-page"},
+    h("h2",{text:"Auhof — Eventbestellung"}),
+    h("div",{class:"p-nr",style:"margin-top:6px;font-size:18px",text:b.bestellnr}),
+    h("div",{style:"color:#555",text:"Erstellt: "+fmtDatum(b.erstellt_am)}),
+    infoTbl
+  );
+  [["Bestelltext",b.freitext],["Hinweis",b.hinweis],["Bestellung Konditorei",b.konditorei_bestellung]]
+    .forEach(([k,v])=>{
+      if (!v) return;
+      seite.append(h("div",{class:"p-ft-h",text:k}));
+      seite.append(h("div",{class:"p-ft",text:v}));
+    });
+  return seite;
+}
+
+function druckeEventBestellung(b){
+  const area = document.getElementById("print-area");
+  clear(area);
+  area.append(eventDruckSeite(b));
+  window.print();
+}
+
+function starteEventAendern(b){
+  state.editEvent = b;
+  state.tab = "event";
   renderApp();
 }
 
@@ -1215,6 +1335,102 @@ function renderKundeFormular(wrap, editB=null){
   );
 
   sync();
+}
+
+// =====================================================================
+//  Eventbestellung: Formular (nur Leitung/Admin) — Anlegen / Ändern
+// =====================================================================
+function renderEventFormular(wrap, editB=null){
+  const f = editB ? {
+    veranstaltung: editB.veranstaltung||"",
+    datum: editB.datum ? String(editB.datum).slice(0,10) : "",
+    uhrzeit: editB.uhrzeit ? hhmm(editB.uhrzeit) : "",
+    location: editB.location||"",
+    personenanzahl: (editB.personenanzahl!=null ? String(editB.personenanzahl) : ""),
+    freitext: editB.freitext||"", hinweis: editB.hinweis||"",
+    konditorei_bestellung: editB.konditorei_bestellung||""
+  } : {
+    veranstaltung:"", datum:"", uhrzeit:"", location:"", personenanzahl:"",
+    freitext:"", hinweis:"", konditorei_bestellung:""
+  };
+
+  if (editB){
+    wrap.append(h("div",{class:"card",style:"margin-bottom:1rem;display:flex;align-items:center;gap:.8rem"},
+      h("div",{},
+        h("div",{style:"font-weight:600",text:"Eventbestellung ändern"}),
+        h("div",{class:"mono muted",style:"font-size:13px",text:editB.bestellnr})
+      ),
+      h("button",{class:"btn-ghost btn-sm",style:"margin-left:auto",text:"Abbrechen",
+        onclick:()=>{ state.editEvent=null; state.tab="alle"; state.listenModus="event"; renderApp(); }})
+    ));
+  }
+
+  const veranstaltungI = h("input",{type:"text",value:f.veranstaltung,placeholder:"z.B. Sommerfest"});
+  const datumI         = h("input",{type:"date",value:f.datum});
+  const uhrzeitI       = h("input",{type:"time",value:f.uhrzeit});
+  const locationI      = h("input",{type:"text",value:f.location,placeholder:"z.B. Seegasse"});
+  const personenI      = h("input",{type:"number",min:"0",step:"1",inputmode:"numeric",
+                            value:f.personenanzahl,placeholder:"Anzahl Personen"});
+  const freitextI      = h("textarea",{rows:"7",placeholder:"Diverses zur Bestellung …"}, f.freitext);
+  const hinweisI       = h("textarea",{rows:"2",placeholder:"Hinweis …"}, f.hinweis);
+  const konditoreiI    = h("textarea",{rows:"3",placeholder:"Bestellung für die Konditorei …"}, f.konditorei_bestellung);
+
+  const submitBtn = h("button",{class:"btn",text: editB ? "Änderung speichern" : "Eventbestellung senden"});
+
+  submitBtn.addEventListener("click", async ()=>{
+    const daten = {
+      veranstaltung: veranstaltungI.value.trim(),
+      datum: datumI.value,
+      uhrzeit: uhrzeitI.value,
+      location: locationI.value.trim(),
+      personenanzahl: personenI.value.trim(),
+      freitext: freitextI.value.trim(),
+      hinweis: hinweisI.value.trim(),
+      konditorei_bestellung: konditoreiI.value.trim()
+    };
+    if (!daten.veranstaltung) return toast("Veranstaltung ist Pflicht.","err");
+    if (!daten.location)      return toast("Location ist Pflicht.","err");
+    if (!daten.datum)         return toast("Datum ist Pflicht.","err");
+
+    submitBtn.disabled=true; submitBtn.textContent = editB ? "Speichern…" : "Senden…";
+    let data, error;
+    if (editB){
+      ({ data, error } = await sb.rpc("eventbestellung_aendern", { p_bestellung_id: editB.id, p_daten: daten }));
+    } else {
+      ({ data, error } = await sb.rpc("eventbestellung_anlegen", { p_daten: daten }));
+    }
+    submitBtn.disabled=false; submitBtn.textContent = editB ? "Änderung speichern" : "Eventbestellung senden";
+    if (error){ toast("Konnte nicht speichern: "+error.message,"err"); return; }
+
+    if (editB) toast("Eventbestellung "+(data?.bestellnr||editB.bestellnr)+" geändert.","ok");
+    else       toast("Eventbestellung "+(data?.bestellnr||"")+" gesendet.","ok");
+
+    state.editEvent=null;
+    await ladeDaten();
+    state.tab="alle"; state.listenModus="event"; renderApp();
+  });
+
+  wrap.append(
+    h("div",{class:"card"},
+      h("h3",{text:"Eventdaten",style:"margin-bottom:.8rem"}),
+      h("div",{}, h("label",{text:"Veranstaltung"}), veranstaltungI),
+      h("div",{class:"grid2",style:"margin-top:.7rem"},
+        h("div",{}, h("label",{text:"Datum"}), datumI),
+        h("div",{}, h("label",{text:"Uhrzeit (optional)"}), uhrzeitI)
+      ),
+      h("div",{class:"grid2",style:"margin-top:.7rem"},
+        h("div",{}, h("label",{text:"Location"}), locationI),
+        h("div",{}, h("label",{text:"Personenanzahl (optional)"}), personenI)
+      )
+    ),
+    h("div",{class:"card"},
+      h("h3",{text:"Bestelltext",style:"margin-bottom:.8rem"}),
+      freitextI,
+      h("div",{style:"margin-top:.7rem"}, h("label",{text:"Hinweis (optional)"}), hinweisI),
+      h("div",{style:"margin-top:.7rem"}, h("label",{text:"Bestellung Konditorei (optional)"}), konditoreiI)
+    ),
+    h("div",{style:"margin-top:1rem"}, submitBtn)
+  );
 }
 
 // =====================================================================
