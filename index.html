@@ -140,6 +140,9 @@
     #print-area table{width:100%; border-collapse:collapse; margin-top:12px}
     #print-area td{padding:4px 6px; border-bottom:1px solid #ccc}
     #print-area .pm{font-family:var(--mono); font-weight:700; text-align:right; width:60px}
+    #print-area .p-page + .p-page{page-break-before:always}
+    #print-area .p-sub{margin-top:16px}
+    #print-area .p-sub .p-nr{font-size:15px}
   }
 </style>
 </head>
@@ -166,6 +169,7 @@ const state = {
   cart:{},               // { artikel_id: menge }
   editBestellung:null,   // aktuell zu ändernde Bestellung (oder null)
   editProbleme:[],       // Namen inaktiver/entfernter Artikel beim Ändern
+  bestellTag:null,       // gewählter Tag in "Bestellungen" (YYYY-MM-DD), null = heute
 };
 
 const app = document.getElementById("app");
@@ -214,6 +218,13 @@ function istNachBestellschluss(schluss){
   if (!schluss) return false;                                  // kein Bestellschluss = immer offen
   return jetztZuerichHHMM() > hhmm(schluss);                   // "HH:MM" nullgepolstert -> Stringvergleich = Zeitvergleich
 }
+// Kalendertag (Zeitzone Europe/Zurich) als "YYYY-MM-DD"
+function heuteZuerich(){
+  return new Date().toLocaleDateString("en-CA",{ timeZone:"Europe/Zurich" });
+}
+function zurichDatum(iso){
+  return new Date(iso).toLocaleDateString("en-CA",{ timeZone:"Europe/Zurich" });
+}
 
 // =====================================================================
 //  Auth
@@ -261,14 +272,14 @@ async function ladeDaten(){
   if (r!=="abteilung" || true){
     const b = await sb.from("bestellungen")
       .select(`id,bestellnr,jahr,monat,laufnr,erstellt_am,
-               abteilung:konten!bestellungen_abteilung_id_fkey(name,kuerzel),
+               abteilung:konten!bestellungen_abteilung_id_fkey(name,kuerzel,sammelbestellung),
                positionen:bestellpositionen(menge, artikel_id, artikel(name))`)
       .order("erstellt_am",{ascending:false});
     state.bestellungen = b.data || [];
   }
 
   if (r==="admin" || r==="leitung"){
-    const k = await sb.from("konten").select("id,name,rolle,kuerzel,bestellschluss").order("rolle").order("name");
+    const k = await sb.from("konten").select("id,name,rolle,kuerzel,bestellschluss,sammelbestellung").order("rolle").order("name");
     state.konten = k.data || [];
   }
 }
@@ -545,42 +556,87 @@ function renderBestellungen(wrap, meineNur){
   const darfAendern  = rolle==="abteilung" && meineNur;
   const zeigeAbteilung = !meineNur; // in "alle" auch die Abteilung zeigen
 
-  let liste = state.bestellungen;
-
-  if (liste.length===0){
+  if (state.bestellungen.length===0){
     wrap.append(h("div",{class:"empty"},
       h("div",{class:"big",text: meineNur ? "Noch keine Bestellungen." : "Es sind noch keine Bestellungen da."}),
       h("div",{class:"muted",text: meineNur ? 'Wechsle zu „Bestellen“, um eine anzulegen.' : ''})));
     return;
   }
 
-  // Filter (nur in "alle")
+  // =========================================================
+  //  "alle": Tagesfilter (Datum) + Abteilungsfilter + Tag drucken
+  // =========================================================
   if (!meineNur){
-    const abteilungen = [...new Set(liste.map(b=>b.abteilung?.kuerzel).filter(Boolean))];
-    const sel = h("select",{style:"max-width:220px"},
-      h("option",{value:"",text:"Alle Abteilungen"}),
-      ...abteilungen.map(k=>h("option",{value:k,text:k}))
-    );
-    sel.addEventListener("change",()=>{ renderBestellungenListe(); });
-    wrap.append(h("div",{class:"row",style:"margin-bottom:1rem"},
-      h("div",{class:"muted",style:"font-size:13px",text:liste.length+" Bestellungen"}),
-      h("div",{style:"margin-left:auto;max-width:220px;width:100%"}, sel)
+    const dateI = h("input",{type:"date",style:"max-width:170px"});
+    dateI.value = state.bestellTag || heuteZuerich();
+
+    const abtSel  = h("select",{style:"max-width:200px"});
+    const countLbl = h("div",{class:"muted",style:"font-size:13px"});
+    const printBtn = darfDrucken
+      ? h("button",{class:"btn btn-sm",text:"Tag drucken"}) : null;
+
+    wrap.append(h("div",{class:"row",style:"margin-bottom:1rem;align-items:flex-end"},
+      h("div",{}, h("label",{text:"Tag"}), dateI),
+      h("div",{}, h("label",{text:"Abteilung"}), abtSel),
+      h("div",{style:"margin-left:auto;display:flex;align-items:center;gap:.7rem"}, countLbl, printBtn)
     ));
-    var filterSel = sel;
+
+    const container = h("div",{});
+    wrap.append(container);
+
+    const aktTag = ()=> dateI.value || heuteZuerich();
+    const tagesDaten = ()=> state.bestellungen.filter(b=>zurichDatum(b.erstellt_am)===aktTag());
+    const sichtbareDaten = ()=>{
+      let d = tagesDaten();
+      if (abtSel.value) d = d.filter(b=>b.abteilung?.kuerzel===abtSel.value);
+      return d;
+    };
+
+    function baueAbtOptionen(){
+      const kuerzel = [...new Set(tagesDaten().map(b=>b.abteilung?.kuerzel).filter(Boolean))].sort();
+      const vorher = abtSel.value;
+      clear(abtSel);
+      abtSel.append(h("option",{value:"",text:"Alle Abteilungen"}));
+      kuerzel.forEach(k=>abtSel.append(h("option",{value:k,text:k})));
+      abtSel.value = kuerzel.includes(vorher) ? vorher : "";
+    }
+
+    function zeichne(){
+      const daten = sichtbareDaten();
+      clear(countLbl);
+      countLbl.textContent = daten.length + (daten.length===1 ? " Bestellung" : " Bestellungen");
+      if (printBtn){
+        printBtn.disabled = daten.length===0;
+        printBtn.style.opacity = daten.length===0 ? .5 : 1;
+      }
+      zeichneListe(container, daten, "Für diesen Tag gibt es keine Bestellungen.");
+    }
+
+    dateI.addEventListener("change",()=>{
+      if (!dateI.value) dateI.value = heuteZuerich();   // leeres Feld = heute
+      state.bestellTag = dateI.value;
+      baueAbtOptionen(); zeichne();
+    });
+    abtSel.addEventListener("change", zeichne);
+    if (printBtn) printBtn.addEventListener("click", ()=>druckeTag(sichtbareDaten()));
+
+    baueAbtOptionen();
+    zeichne();
+    return;
   }
 
+  // =========================================================
+  //  "meine": eigene Bestellungen (ohne Datums-/Drucksteuerung)
+  // =========================================================
   const container = h("div",{});
   wrap.append(container);
-  renderBestellungenListe();
+  zeichneListe(container, state.bestellungen, "Keine Bestellungen.");
 
-  function renderBestellungenListe(){
+  // ---- gemeinsame Listen-Ausgabe ----
+  function zeichneListe(container, daten, leerText){
     clear(container);
-    let daten = state.bestellungen;
-    if (!meineNur && filterSel && filterSel.value){
-      daten = daten.filter(b=>b.abteilung?.kuerzel===filterSel.value);
-    }
     if (daten.length===0){
-      container.append(h("div",{class:"empty"}, h("div",{class:"muted",text:"Keine Treffer."})));
+      container.append(h("div",{class:"empty"}, h("div",{class:"muted",text:leerText||"Keine Treffer."})));
       return;
     }
     for (const b of daten){
@@ -634,6 +690,75 @@ function druckeBestellung(b){
     h("div",{style:"color:#555",text:"Datum: "+fmtDatum(b.erstellt_am)}),
     tbl
   );
+  window.print();
+}
+
+// Tagesdruck: nach Abteilung gruppiert.
+//  - Abteilung MIT Haken (sammelbestellung): alle Bestellungen des Tags
+//    untereinander auf EINEM Blatt.
+//  - Abteilung OHNE Haken: jede Bestellung auf einem eigenen Blatt.
+function druckeTag(bestellungen){
+  if (!bestellungen || bestellungen.length===0){
+    toast("Für diesen Tag gibt es keine Bestellungen.","err"); return;
+  }
+  const area = document.getElementById("print-area");
+  clear(area);
+
+  function posTabelle(b){
+    return h("table",{},
+      ...(b.positionen||[]).map(p=>h("tr",{},
+        h("td",{class:"pm",text:String(p.menge)}),
+        h("td",{text:p.artikel?.name || "(Artikel entfernt)"})
+      ))
+    );
+  }
+
+  // nach Abteilung gruppieren (Schlüssel: Kürzel, sonst Name)
+  const gruppen = new Map();
+  for (const b of bestellungen){
+    const key = b.abteilung?.kuerzel || b.abteilung?.name || "—";
+    if (!gruppen.has(key)){
+      gruppen.set(key, {
+        name: b.abteilung?.name || key,
+        sort: b.abteilung?.kuerzel || b.abteilung?.name || "",
+        sammel: !!b.abteilung?.sammelbestellung,
+        orders: []
+      });
+    }
+    gruppen.get(key).orders.push(b);
+  }
+
+  const sortiert = [...gruppen.values()].sort((a,b)=>a.sort.localeCompare(b.sort));
+
+  for (const g of sortiert){
+    const orders = [...g.orders].sort((x,y)=>String(x.bestellnr).localeCompare(String(y.bestellnr)));
+    if (g.sammel){
+      // ein Blatt, Bestellungen untereinander
+      const seite = h("div",{class:"p-page"},
+        h("h2",{text:"Auhof — Sammelbestellung"}),
+        h("div",{style:"margin-top:4px;font-weight:600",text:g.name}),
+        h("div",{style:"color:#555",text:"Datum: "+(orders[0]?fmtDatum(orders[0].erstellt_am):"")})
+      );
+      orders.forEach(b=>{
+        seite.append(h("div",{class:"p-sub"},
+          h("div",{class:"p-nr",text:b.bestellnr}),
+          posTabelle(b)
+        ));
+      });
+      area.append(seite);
+    } else {
+      // jede Bestellung ein eigenes Blatt
+      orders.forEach(b=>{
+        area.append(h("div",{class:"p-page"},
+          h("h2",{text:"Auhof — Bestellung"}),
+          h("div",{class:"p-nr",style:"margin-top:6px;font-size:18px",text:b.bestellnr}),
+          h("div",{style:"margin-top:4px",text:"Abteilung: "+g.name}),
+          h("div",{style:"color:#555",text:"Datum: "+fmtDatum(b.erstellt_am)}),
+          posTabelle(b)
+        ));
+      });
+    }
+  }
   window.print();
 }
 
@@ -872,20 +997,37 @@ function renderAbteilungen(wrap){
         : ('Bestellschluss für „'+k.name+'“ entfernt.'),"ok");
       await ladeDaten(); renderApp();
     }});
+
+    // Sammelbestellung: Haken speichert sofort (ohne Re-Render)
+    const sammelCb = h("input",{type:"checkbox",style:"width:auto;margin:0;cursor:pointer"});
+    sammelCb.checked = !!k.sammelbestellung;
+    sammelCb.addEventListener("change", async ()=>{
+      sammelCb.disabled = true;
+      const gewuenscht = sammelCb.checked;
+      const { error } = await rufeFunktion({aktion:"sammelbestellung_setzen", id:k.id, sammelbestellung: gewuenscht});
+      sammelCb.disabled = false;
+      if (error){ sammelCb.checked = !gewuenscht; toast(error,"err"); return; }
+      k.sammelbestellung = gewuenscht;
+      toast(gewuenscht
+        ? ('Sammelbestellung für „'+k.name+'“ aktiviert.')
+        : ('Sammelbestellung für „'+k.name+'“ deaktiviert.'),"ok");
+    });
+
     tbody.append(h("tr",{},
       h("td",{text:k.name}),
       h("td",{class:"mono",text:k.kuerzel||"—"}),
-      h("td",{}, h("div",{class:"row"}, zeitI, saveBtn))
+      h("td",{}, h("div",{class:"row"}, zeitI, saveBtn)),
+      h("td",{style:"text-align:center"}, sammelCb)
     ));
   });
   wrap.append(h("div",{class:"card",style:"padding:.6rem"},
     h("table",{class:"list"},
-      h("thead",{}, h("tr",{}, h("th",{text:"Abteilung"}), h("th",{text:"Kürzel"}), h("th",{text:"Bestellschluss"}))),
+      h("thead",{}, h("tr",{}, h("th",{text:"Abteilung"}), h("th",{text:"Kürzel"}), h("th",{text:"Bestellschluss"}), h("th",{text:"Sammelbestellung"}))),
       tbody
     ),
     abt.length===0 ? h("div",{class:"empty"},h("div",{class:"muted",text:"Noch keine Abteilungen."})) : null,
     h("div",{class:"muted",style:"font-size:12px;padding:.5rem .5rem 0",
-      text:"Leeres Feld = kein Bestellschluss (immer offen). Die Zeit gilt täglich, Zeitzone Europe/Zurich."})
+      text:"Leeres Feld = kein Bestellschluss (immer offen). Die Zeit gilt täglich, Zeitzone Europe/Zurich. Sammelbestellung: Haken = Tagesbestellungen werden beim „Tag drucken“ auf einem Blatt zusammengefasst."})
   ));
 
   // --- Passwort setzen (jedes Konto) ---
