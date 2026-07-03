@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1a1712">
+<meta name="theme-color" content="#141517">
 <title>Auhof · Bestellungen</title>
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="auhof-icon-512.png">
@@ -13,9 +13,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#1a1712; --panel:#241f18; --panel2:#2e2820; --line:#3a3227;
-    --ink:#ece6da; --dim:#a99f8d; --faint:#6f6656;
-    --gold:#e0a458; --gold-deep:#c98a3c; --danger:#c65c6a; --ok:#8bb06a;
+    --bg:#141517; --panel:#1c1d20; --panel2:#24262b; --line:#34363c;
+    --ink:#e9eaec; --dim:#9a9ca2; --faint:#6a6c72;
+    --red:#cf3229; --red-deep:#a5231b; --danger:#c65c6a; --ok:#8bb06a;
     --radius:14px; --mono:'JetBrains Mono',ui-monospace,monospace;
   }
   *{box-sizing:border-box}
@@ -29,8 +29,8 @@
   .mono{font-family:var(--mono); font-feature-settings:'tnum' 1; letter-spacing:.02em}
   button{font-family:inherit; font-size:14px; cursor:pointer; border:none; border-radius:10px; padding:.6rem 1rem; transition:transform .06s ease, background .15s ease, border-color .15s}
   button:active{transform:translateY(1px)}
-  .btn{background:var(--gold); color:#241a0c; font-weight:600}
-  .btn:hover{background:var(--gold-deep)}
+  .btn{background:var(--red); color:#fff; font-weight:600}
+  .btn:hover{background:var(--red-deep)}
   .btn-ghost{background:transparent; color:var(--ink); border:1px solid var(--line)}
   .btn-ghost:hover{border-color:var(--dim)}
   .btn-danger{background:transparent; color:var(--danger); border:1px solid #4a2c30}
@@ -41,26 +41,26 @@
     border:1px solid var(--line); border-radius:10px; padding:.55rem .7rem; width:100%;
   }
   textarea{resize:vertical; line-height:1.45}
-  input:focus,select:focus,textarea:focus{outline:2px solid var(--gold-deep); outline-offset:-1px; border-color:var(--gold-deep)}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--red-deep); outline-offset:-1px; border-color:var(--red-deep)}
   label{display:block; font-size:13px; color:var(--dim); margin-bottom:.3rem}
-  a{color:var(--gold)}
+  a{color:var(--red)}
 
   /* Layout */
   .topbar{
     position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:1rem;
-    padding:.8rem 1.1rem; background:rgba(26,23,18,.9); backdrop-filter:blur(8px);
+    padding:.8rem 1.1rem; background:rgba(20,21,23,.9); backdrop-filter:blur(8px);
     border-bottom:1px solid var(--line);
   }
   .brand{font-family:'Space Grotesk'; font-weight:700; font-size:18px; letter-spacing:.01em}
-  .brand span{color:var(--gold)}
+  .brand span{color:var(--red)}
   .who{margin-left:auto; text-align:right; font-size:13px; color:var(--dim)}
   .who b{color:var(--ink); font-weight:600}
   .role-chip{display:inline-block; font-size:11px; text-transform:uppercase; letter-spacing:.08em;
-    color:var(--gold); border:1px solid #4a3a22; border-radius:999px; padding:.1rem .5rem; margin-left:.4rem}
+    color:var(--red); border:1px solid #5a2622; border-radius:999px; padding:.1rem .5rem; margin-left:.4rem}
   .tabs{display:flex; gap:.3rem; padding:.6rem 1rem 0; border-bottom:1px solid var(--line); overflow-x:auto}
   .tab{background:transparent; color:var(--dim); border:none; border-bottom:2px solid transparent;
     border-radius:0; padding:.6rem .7rem; font-weight:500; white-space:nowrap}
-  .tab.active{color:var(--ink); border-bottom-color:var(--gold)}
+  .tab.active{color:var(--ink); border-bottom-color:var(--red)}
   .subtabs{display:flex; gap:.3rem; margin:0 0 1.3rem; border-bottom:1px solid var(--line); overflow-x:auto}
   .wrap{max-width:900px; margin:0 auto; padding:1.4rem 1.1rem 5rem}
 
@@ -117,7 +117,7 @@
   .ticket{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden}
   .ticket + .ticket{margin-top:.8rem}
   .ticket-top{display:flex; align-items:center; gap:.7rem; padding:.85rem 1rem; border-bottom:1px dashed var(--line)}
-  .ticket-nr{font-family:var(--mono); font-weight:700; color:var(--gold); font-size:15px}
+  .ticket-nr{font-family:var(--mono); font-weight:700; color:var(--red); font-size:15px}
   .ticket-meta{margin-left:auto; text-align:right; font-size:12px; color:var(--dim)}
   .ticket-body{padding:.7rem 1rem}
   .pos{display:flex; gap:.7rem; padding:.22rem 0; font-size:14px}
@@ -126,7 +126,7 @@
   .ticket-actions{display:flex; gap:.5rem; padding:.6rem 1rem .85rem}
 
   /* summary bar for ordering */
-  .summary{position:fixed; left:0; right:0; bottom:0; z-index:20; background:rgba(36,31,24,.96);
+  .summary{position:fixed; left:0; right:0; bottom:0; z-index:20; background:rgba(28,29,32,.96);
     backdrop-filter:blur(8px); border-top:1px solid var(--line); padding:.8rem 1.1rem;
     display:flex; align-items:center; gap:1rem}
   .summary .info{font-size:14px; color:var(--dim)}
@@ -134,7 +134,7 @@
   .summary .btn{margin-left:auto}
 
   .toast{position:fixed; left:50%; bottom:5.5rem; transform:translateX(-50%); z-index:50;
-    background:#0f0d0a; color:var(--ink); border:1px solid var(--line); border-radius:10px;
+    background:#0d0e10; color:var(--ink); border:1px solid var(--line); border-radius:10px;
     padding:.7rem 1rem; font-size:14px; max-width:88vw; box-shadow:0 8px 30px rgba(0,0,0,.5)}
   .toast.err{border-color:#5a2f34; color:#f0c2c7}
   .toast.ok{border-color:#3f5030}
@@ -153,7 +153,7 @@
   .seg{display:inline-flex; gap:.25rem; background:var(--panel2); border:1px solid var(--line);
     border-radius:10px; padding:.2rem}
   .seg-btn{background:transparent; color:var(--dim); border-radius:8px; padding:.4rem .8rem; font-weight:500}
-  .seg-btn.active{background:var(--gold); color:#241a0c; font-weight:600}
+  .seg-btn.active{background:var(--red); color:#fff; font-weight:600}
 
   /* Info-Zeilen auf Kunden-Tickets */
   .kv{display:flex; gap:.6rem; padding:.18rem 0; font-size:14px}
@@ -381,7 +381,7 @@ function renderLogin(){
   app.append(
     h("div",{class:"login"},
       h("h1",{style:"font-size:38px;text-align:center;margin-bottom:1.1rem"},
-        h("span",{style:"color:var(--gold)"},"Auhof"), " Orders"),
+        h("span",{style:"color:var(--red)"},"Auhof"), " Orders"),
       h("div",{class:"card"},
         h("div",{class:"stack"},
           h("div",{}, h("label",{text:"Name"}), nameI),
