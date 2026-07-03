@@ -1042,7 +1042,7 @@ function kundeInfoPaare(b){
     paare.push(["Lieferadresse", b.lieferadresse||""]);
     paare.push(["Liefertermin", fmtTag(b.liefertag) + (b.lieferzeit ? ", "+hhmm(b.lieferzeit)+" Uhr" : "")]);
   }
-  if (b.bezahlart==="rechnung") paare.push(["Rechnungsadresse", b.rechnungsadresse||""]);
+  if (b.rechnungsadresse) paare.push(["Rechnungsadresse", b.rechnungsadresse]);
   return paare;
 }
 
@@ -1217,9 +1217,6 @@ function renderKundeFormular(wrap, editB=null){
     h("option",{value:"abholung",  ...(f.modus==="abholung" ?{selected:"selected"}:{}), text:"Abholung"}),
     h("option",{value:"lieferung", ...(f.modus==="lieferung"?{selected:"selected"}:{}), text:"Lieferung"})
   );
-  const modusHint = h("div",{class:"muted",style:"font-size:12px;margin-top:.3rem",
-    text:"Vor Ort ⇒ nur Abholung möglich."});
-
   const abholSel = h("select",{},
     h("option",{value:"",text:"— Abteilung wählen —"}),
     ...state.abteilungenListe.map(a=>h("option",{value:a.id,
@@ -1240,31 +1237,35 @@ function renderKundeFormular(wrap, editB=null){
   const lieferzeitLbl  = h("label",{text:"Lieferzeit"});
   const lieferzeitWrap = h("div",{}, lieferzeitLbl, lieferzeitI);
   const rechnungWrap   = h("div",{style:"margin-top:.7rem"}, h("label",{text:"Rechnungsadresse"}), rechnungI);
-  const modusWrap      = h("div",{}, h("label",{text:"Abwicklung"}), modusSel, modusHint);
+  const modusWrap      = h("div",{}, h("label",{text:"Abwicklung"}), modusSel);
   const bezahltWrap    = h("label",{style:"margin-top:.7rem;display:flex;align-items:center;gap:.5rem;color:var(--ink);cursor:pointer"},
                            bezahltCb, "Bereits bezahlt");
 
   function sync(){
     const vorOrt = (bezahlSel.value === "vor_ort");
-    modusSel.disabled = vorOrt;
-    if (vorOrt){ modusSel.value = "abholung"; f.modus = "abholung"; }
-    modusHint.style.display = vorOrt ? "" : "none";
 
+    // Abwicklung ist jetzt immer frei wählbar (auch bei Vor Ort)
     const abholung = (modusSel.value === "abholung");
     abholWrap.style.display      = abholung ? "" : "none";
     lieferWrap.style.display     = abholung ? "none" : "";
-    lieferzeitWrap.style.display = "";                       // Zeit jetzt in beiden Fällen Pflicht
+    lieferzeitWrap.style.display = "";                       // Zeit in beiden Fällen Pflicht
     lieferzeitLbl.textContent    = abholung ? "Abholzeit" : "Lieferzeit";
-    rechnungWrap.style.display   = (bezahlSel.value === "rechnung") ? "" : "none";
-    bezahltWrap.style.display    = vorOrt ? "" : "none";     // „Bezahlt" nur bei Vor Ort
+
+    // „Bereits bezahlt" gibt es nur bei Vor Ort
+    bezahltWrap.style.display    = vorOrt ? "" : "none";
+    const bezahlt = vorOrt && bezahltCb.checked;
+
+    // Rechnungsadresse: bei „Auf Rechnung" immer, bei „Vor Ort" nur
+    // solange NICHT bereits bezahlt.
+    rechnungWrap.style.display   = bezahlt ? "none" : "";
   }
 
   bezahlSel.addEventListener("change",()=>{
     f.bezahlart = bezahlSel.value;
-    if (f.bezahlart==="vor_ort"){ modusSel.value="abholung"; f.modus="abholung"; }
     sync();
   });
   modusSel.addEventListener("change",()=>{ f.modus = modusSel.value; sync(); });
+  bezahltCb.addEventListener("change",()=>{ f.bezahlt = bezahltCb.checked; sync(); });
 
   const submitBtn = h("button",{class:"btn",text: editB ? "Änderung speichern" : "Kundenbestellung senden"});
   if (gesperrt){ submitBtn.disabled = true; submitBtn.style.opacity = .5; }
@@ -1283,7 +1284,6 @@ function renderKundeFormular(wrap, editB=null){
     f.lieferzeit       = lieferzeitI.value;
     f.freitext         = freitextI.value.trim();
     f.bezahlt          = bezahltCb.checked;
-    if (f.bezahlart==="vor_ort") f.modus = "abholung";
   }
 
   submitBtn.addEventListener("click", async ()=>{
@@ -1296,8 +1296,9 @@ function renderKundeFormular(wrap, editB=null){
       return toast(f.modus==="abholung" ? "Abholdatum ist Pflicht." : "Lieferdatum ist Pflicht.","err");
     if (!f.lieferzeit)
       return toast(f.modus==="abholung" ? "Abholzeit ist Pflicht." : "Lieferzeit ist Pflicht.","err");
-    if (f.bezahlart==="rechnung" && !f.rechnungsadresse)
-      return toast("Bei Bezahlung auf Rechnung ist die Rechnungsadresse Pflicht.","err");
+    const istBezahlt = (f.bezahlart==="vor_ort" && f.bezahlt);
+    if (!istBezahlt && !f.rechnungsadresse)
+      return toast("Ohne Haken „bereits bezahlt“ ist die Rechnungsadresse Pflicht.","err");
     if (f.modus==="abholung"){
       if (!f.abhol_abteilung_id) return toast("Bitte eine Abhol-Abteilung wählen.","err");
     } else {
@@ -1309,7 +1310,7 @@ function renderKundeFormular(wrap, editB=null){
       vorname: f.vorname, nachname: f.nachname, email: f.email, telefon: f.telefon,
       bezahlart: f.bezahlart, modus: f.modus,
       abhol_abteilung_id: f.modus==="abholung"  ? f.abhol_abteilung_id : "",
-      rechnungsadresse:   f.bezahlart==="rechnung" ? f.rechnungsadresse : "",
+      rechnungsadresse:   (f.bezahlart==="vor_ort" && f.bezahlt) ? "" : f.rechnungsadresse,
       lieferadresse:      f.modus==="lieferung"  ? f.lieferadresse : "",
       liefertag: f.liefertag,
       lieferzeit: f.lieferzeit,
