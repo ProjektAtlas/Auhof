@@ -130,6 +130,14 @@
     letter-spacing:.06em; color:var(--danger); border:1px solid #4a2c30; background:#2c1c1e;
     border-radius:999px; padding:.08rem .5rem}
 
+  /* Abteilungs-Gruppen im zusammengeführten Bestellungen-Tab */
+  .gruppe-h{display:flex; align-items:baseline; gap:.6rem; flex-wrap:wrap;
+    margin:1.7rem 0 .8rem; padding-bottom:.4rem; border-bottom:1px solid var(--line)}
+  .gruppe-h:first-child{margin-top:0}
+  .gruppe-h .g-name{font-weight:600; font-size:16px; color:var(--ink)}
+  .gruppe-h .g-cnt{font-size:13px; color:var(--dim)}
+  .gruppe-block + .gruppe-block{margin-top:.2rem}
+
   /* summary bar for ordering */
   .summary{position:fixed; left:0; right:0; bottom:0; z-index:20; background:rgba(28,29,32,.96);
     backdrop-filter:blur(8px); border-top:1px solid var(--line); padding:.8rem 1.1rem;
@@ -192,6 +200,10 @@
     #print-area .info-leer{color:#555; margin-top:8px; font-size:14px}
     #print-area table.info-storno td{padding:4px 6px; border-bottom:1px solid #ccc; vertical-align:top}
     #print-area table.info-storno td.snr{font-family:var(--mono); font-weight:700; width:38%}
+    #print-area table.info-mengen{width:100%; border-collapse:collapse; margin-top:8px}
+    #print-area table.info-mengen td{padding:4px 6px; border-bottom:1px solid #ccc; vertical-align:top; font-size:14px}
+    #print-area table.info-mengen td.mabt{width:40%; font-weight:600}
+    #print-area .info-events{margin-top:8px; font-size:14px}
 
     /* ---- Eventbestellung: Druck im Vorlagen-Stil ---- */
     #print-area .ev-head{text-align:right; margin-bottom:4px}
@@ -318,6 +330,13 @@ function heuteZuerich(){
 function zurichDatum(iso){
   return new Date(iso).toLocaleDateString("en-CA",{ timeZone:"Europe/Zurich" });
 }
+// Kalendertag Vortag (Zeitzone Europe/Zurich) als "YYYY-MM-DD" — ohne Zeitzonen-Drift
+function gesternZuerich(){
+  const [y,m,d] = heuteZuerich().split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m-1, d));
+  dt.setUTCDate(dt.getUTCDate()-1);
+  return dt.toISOString().slice(0,10);
+}
 
 // =====================================================================
 //  Auth
@@ -349,7 +368,7 @@ async function logout(){
   state.editBestellung=null; state.editProbleme=[];
   state.editKunde=null; state.editEvent=null; state.listenModus="abteilung";
   state.kundenbestellungen=[]; state.eventbestellungen=[]; state.abteilungenListe=[];
-  state.tagesmitteilungen=[]; state.tagesinfoDatum=null;
+  state.tagesmitteilungen=[]; state.tagesinfoDatum=null; state.bestellTag=null;
   state.auswVon=null; state.auswBis=null; state.auswAbt="";
   renderLogin();
 }
@@ -776,7 +795,6 @@ function renderBestellungen(wrap, meineNur){
   const darfStornieren = rolle==="admin" || rolle==="leitung" || (rolle==="abteilung" && meineNur);
   const darfDrucken    = rolle==="admin" || rolle==="leitung" || rolle==="konditorei";
   const darfAendernAbt = rolle==="abteilung" && meineNur;   // eigene ändern
-  const zeigeAbteilung = !meineNur;                          // in "alle" die Abteilung zeigen
   // Bezahlstatus umschalten: eigene Abteilung (nur eigene) oder Konditorei/Leitung/Admin (alle)
   const darfBezahltSetzen = (rolle==="abteilung" && meineNur)
     || rolle==="konditorei" || rolle==="leitung" || rolle==="admin";
@@ -815,42 +833,37 @@ function renderBestellungen(wrap, meineNur){
   }
 
   // =========================================================
-  //  "alle" · Event-Umschalter: eigene, einfache Ansicht
-  //  (kein Tages-/Abteilungsfilter; Events gehören keiner Abteilung an)
-  // =========================================================
-  if (state.listenModus==="event"){
-    wrap.append(segLeiste());
-    const container = h("div",{});
-    wrap.append(container);
-    zeichneEventListe(container, state.eventbestellungen||[], "Noch keine Eventbestellungen.");
-    return;
-  }
-
-  // =========================================================
   //  "alle": Tagesfilter + Abteilungsfilter + Tag drucken
-  //  (Tag drucken umfasst IMMER beide Bestellarten)
+  //  Alles zusammengeführt auf EINER Ansicht, nach Abteilung gruppiert:
+  //  je Abteilung zuerst Abteilungs-, dann Kundenbestellungen; Events zuletzt.
+  //  Events erscheinen nur ohne Abteilungsfilter (sie gehören keiner Abteilung an).
+  //  Für die Konditorei ist der Tag standardmäßig auf GESTERN (Vortag) gesetzt.
   // =========================================================
+  const standardTag = rolle==="konditorei" ? gesternZuerich() : heuteZuerich();
+
   const dateI = h("input",{type:"date",style:"max-width:170px"});
-  dateI.value = state.bestellTag || heuteZuerich();
+  dateI.value = state.bestellTag || standardTag;
 
   const abtSel   = h("select",{style:"max-width:200px"});
   const countLbl = h("div",{class:"muted",style:"font-size:13px"});
   const printBtn = darfDrucken ? h("button",{class:"btn btn-sm",text:"Tag drucken"}) : null;
 
-  wrap.append(h("div",{class:"row",style:"margin-bottom:1rem;align-items:flex-end"},
+  wrap.append(h("div",{class:"row",style:"margin-bottom:1.2rem;align-items:flex-end"},
     h("div",{}, h("label",{text:"Tag"}), dateI),
     h("div",{}, h("label",{text:"Abteilung"}), abtSel),
     h("div",{style:"margin-left:auto;display:flex;align-items:center;gap:.7rem"}, countLbl, printBtn)
   ));
 
-  wrap.append(segLeiste());
   const container = h("div",{});
   wrap.append(container);
 
-  const aktTag   = ()=> dateI.value || heuteZuerich();
-  const abtTag   = ()=> state.bestellungen.filter(b=>zurichDatum(b.erstellt_am)===aktTag());
-  const kundeTag = ()=> state.kundenbestellungen.filter(b=>zurichDatum(b.erstellt_am)===aktTag());
-  const nachAbt  = (arr)=> abtSel.value ? arr.filter(b=>b.abteilung?.kuerzel===abtSel.value) : arr;
+  const aktTag    = ()=> dateI.value || standardTag;
+  const abtTag    = ()=> state.bestellungen.filter(b=>zurichDatum(b.erstellt_am)===aktTag());
+  const kundeTag  = ()=> state.kundenbestellungen.filter(b=>zurichDatum(b.erstellt_am)===aktTag());
+  const eventTag  = ()=> (state.eventbestellungen||[]).filter(b=>zurichDatum(b.erstellt_am)===aktTag());
+  const nachAbt   = (arr)=> abtSel.value ? arr.filter(b=>b.abteilung?.kuerzel===abtSel.value) : arr;
+  // Events nur ohne Abteilungsfilter zeigen/drucken
+  const eventsAkt = ()=> abtSel.value ? [] : eventTag();
 
   function baueAbtOptionen(){
     const kuerzel = [...new Set([
@@ -864,20 +877,76 @@ function renderBestellungen(wrap, meineNur){
     abtSel.value = kuerzel.includes(vorher) ? vorher : "";
   }
 
+  // Zusammenfassungs-Label (zählt nur NICHT-stornierte = tatsächlich gedruckte)
+  function mengenLabel(nAbt, nKunde, nEvent){
+    const teile = [
+      nAbt   + (nAbt===1   ? " Abteilungsbestellung" : " Abteilungsbestellungen"),
+      nKunde + (nKunde===1 ? " Kundenbestellung"      : " Kundenbestellungen"),
+    ];
+    if (nEvent>0) teile.push(nEvent + (nEvent===1 ? " Eventbestellung" : " Eventbestellungen"));
+    return teile.join(" · ");
+  }
+
   function zeichne(){
-    if (state.listenModus==="abteilung"){
-      const daten = nachAbt(abtTag());
-      countLbl.textContent = daten.length + (daten.length===1?" Abteilungsbestellung":" Abteilungsbestellungen");
-      zeichneAbtListe(container, daten, "Für diesen Tag gibt es keine Abteilungsbestellungen.");
-    } else {
-      const daten = nachAbt(kundeTag());
-      countLbl.textContent = daten.length + (daten.length===1?" Kundenbestellung":" Kundenbestellungen");
-      zeichneKundeListe(container, daten, "Für diesen Tag gibt es keine Kundenbestellungen.");
+    const abtL   = nachAbt(abtTag());
+    const kundeL = nachAbt(kundeTag());
+    const evL    = eventsAkt();
+
+    countLbl.textContent = mengenLabel(
+      abtL.filter(b=>!b.storniert).length,
+      kundeL.filter(b=>!b.storniert).length,
+      evL.filter(b=>!b.storniert).length
+    );
+
+    // nach Abteilung gruppieren (Schlüssel: Kürzel, sonst Name)
+    const grpKey = (x)=> x ? (x.kuerzel || x.name || "—") : "—";
+    const gruppen = new Map();
+    function eintrag(b){
+      const k = grpKey(b.abteilung);
+      if (!gruppen.has(k)) gruppen.set(k, {name:b.abteilung?.name || k, sort:k, abt:[], kunde:[]});
+      return gruppen.get(k);
     }
+    for (const b of abtL)   eintrag(b).abt.push(b);
+    for (const b of kundeL) eintrag(b).kunde.push(b);
+    const sortiert = [...gruppen.values()].sort((a,b)=>a.sort.localeCompare(b.sort));
+    const nrSort = (x,y)=>String(x.bestellnr).localeCompare(String(y.bestellnr));
+
+    clear(container);
+    if (sortiert.length===0 && evL.length===0){
+      container.append(h("div",{class:"empty"},
+        h("div",{class:"muted",text:"Für diesen Tag gibt es keine Bestellungen."})));
+    } else {
+      for (const g of sortiert){
+        const nA = g.abt.filter(b=>!b.storniert).length;
+        const nK = g.kunde.filter(b=>!b.storniert).length;
+        const block = h("div",{class:"gruppe-block"},
+          h("div",{class:"gruppe-h"},
+            h("span",{class:"g-name",text:g.name}),
+            h("span",{class:"g-cnt",text:mengenLabel(nA,nK,0)})
+          )
+        );
+        [...g.abt].sort(nrSort).forEach(b=> block.append(abtTicket(b)));
+        [...g.kunde].sort(nrSort).forEach(b=> block.append(kundeTicket(b)));
+        container.append(block);
+      }
+      if (evL.length){
+        const nE = evL.filter(b=>!b.storniert).length;
+        const block = h("div",{class:"gruppe-block"},
+          h("div",{class:"gruppe-h"},
+            h("span",{class:"g-name",text:"Eventbestellungen"}),
+            h("span",{class:"g-cnt",text:nE + (nE===1 ? " Eventbestellung" : " Eventbestellungen")})
+          )
+        );
+        [...evL].sort(nrSort).forEach(b=> block.append(eventTicket(b)));
+        container.append(block);
+      }
+    }
+
     if (printBtn){
       const tag = aktTag();
-      const produktion = nachAbt(abtTag()).filter(b=>!b.storniert).length
-                       + nachAbt(kundeTag()).filter(b=>!b.storniert).length;
+      const produktion = abtL.filter(b=>!b.storniert).length
+                       + kundeL.filter(b=>!b.storniert).length
+                       + evL.filter(b=>!b.storniert).length;
       const hatStornos = sammleTagesStornos(tag).length > 0;
       const hatMitt = (state.tagesmitteilungen||[]).some(m=>String(m.datum).slice(0,10)===tag);
       const etwas = produktion>0 || hatStornos || hatMitt;
@@ -887,52 +956,54 @@ function renderBestellungen(wrap, meineNur){
   }
 
   dateI.addEventListener("change",()=>{
-    if (!dateI.value) dateI.value = heuteZuerich();
+    if (!dateI.value) dateI.value = standardTag;
     state.bestellTag = dateI.value;
     baueAbtOptionen(); zeichne();
   });
   abtSel.addEventListener("change", zeichne);
   if (printBtn) printBtn.addEventListener("click", ()=>{
-    const tag = aktTag();
+    const tag  = aktTag();
     const mitt = (state.tagesmitteilungen||[]).find(m=>String(m.datum).slice(0,10)===tag);
-    druckeTag(nachAbt(abtTag()), nachAbt(kundeTag()), tag, mitt?mitt.text:"", sammleTagesStornos(tag));
+    druckeTag(nachAbt(abtTag()), nachAbt(kundeTag()), eventsAkt(), tag, mitt?mitt.text:"", sammleTagesStornos(tag));
   });
 
   baueAbtOptionen();
   zeichne();
 
   // ---- Liste: Abteilungsbestellungen ----
+  // Einzelnes Ticket: Abteilungsbestellung
+  function abtTicket(b){
+    const top = h("div",{class:"ticket-top"},
+      h("span",{class:"ticket-nr",text:b.bestellnr}),
+      b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : null,
+      h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
+    );
+    const body = h("div",{class:"ticket-body"});
+    (b.positionen||[]).forEach(p=>{
+      body.append(h("div",{class:"pos"},
+        h("span",{class:"m",text:String(p.menge)}),
+        h("span",{class:"n",text:p.artikel?.name || "(Artikel entfernt)"})
+      ));
+    });
+    const zu = istNachBestellschluss(state.konto.bestellschluss);
+    const actions = b.storniert ? null : h("div",{class:"ticket-actions"},
+      darfAendernAbt ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
+        ...(zu ? {disabled:"disabled", style:"opacity:.5"} : {}),
+        onclick:()=>starteAendern(b)}) : null,
+      darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeBestellung(b)}) : null,
+      darfStornieren ? h("button",{class:"btn-danger btn-sm",text:"Stornieren",
+        onclick:()=>storniere("abteilung", b, "Bestellung")}) : null
+    );
+    return h("div",{class:"ticket"+(b.storniert?" storniert":"")}, top, body, actions);
+  }
+
   function zeichneAbtListe(container, daten, leerText){
     clear(container);
     if (daten.length===0){
       container.append(h("div",{class:"empty"}, h("div",{class:"muted",text:leerText||"Keine Treffer."})));
       return;
     }
-    for (const b of daten){
-      const top = h("div",{class:"ticket-top"},
-        h("span",{class:"ticket-nr",text:b.bestellnr}),
-        b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : null,
-        zeigeAbteilung && b.abteilung ? h("span",{class:"muted",style:"font-size:13px",text:b.abteilung.name}) : null,
-        h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
-      );
-      const body = h("div",{class:"ticket-body"});
-      (b.positionen||[]).forEach(p=>{
-        body.append(h("div",{class:"pos"},
-          h("span",{class:"m",text:String(p.menge)}),
-          h("span",{class:"n",text:p.artikel?.name || "(Artikel entfernt)"})
-        ));
-      });
-      const zu = istNachBestellschluss(state.konto.bestellschluss);
-      const actions = b.storniert ? null : h("div",{class:"ticket-actions"},
-        darfAendernAbt ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
-          ...(zu ? {disabled:"disabled", style:"opacity:.5"} : {}),
-          onclick:()=>starteAendern(b)}) : null,
-        darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeBestellung(b)}) : null,
-        darfStornieren ? h("button",{class:"btn-danger btn-sm",text:"Stornieren",
-          onclick:()=>storniere("abteilung", b, "Bestellung")}) : null
-      );
-      container.append(h("div",{class:"ticket"+(b.storniert?" storniert":"")}, top, body, actions));
-    }
+    for (const b of daten) container.append(abtTicket(b));
   }
 
   // ---- Bezahlstatus umschalten (nur „Vor Ort"; nicht an Bestellschluss gebunden) ----
@@ -953,6 +1024,37 @@ function renderBestellungen(wrap, meineNur){
     return btn;
   }
 
+  // Einzelnes Ticket: Kundenbestellung
+  function kundeTicket(b){
+    const kundeName = ((b.vorname||"")+" "+(b.nachname||"")).trim();
+    const top = h("div",{class:"ticket-top"},
+      h("span",{class:"ticket-nr",text:b.bestellnr}),
+      b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : null,
+      h("span",{class:"muted",style:"font-size:13px",text:kundeName}),
+      h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
+    );
+    const body = h("div",{class:"ticket-body"});
+    kundeInfoPaare(b).forEach(([k,v])=>{
+      body.append(h("div",{class:"kv"}, h("span",{class:"k",text:k}), h("span",{class:"v",text:v})));
+    });
+    body.append(h("div",{class:"kv-div"}));
+    body.append(h("div",{class:"kv"},
+      h("span",{class:"k",text:"Bestelltext"}),
+      h("span",{class:"v",text:b.freitext||""})));
+
+    const zu = istNachBestellschluss(state.konto.bestellschluss_kunde);
+    const actions = b.storniert ? null : h("div",{class:"ticket-actions"},
+      (b.bezahlart==="vor_ort" && darfBezahltSetzen) ? bezahltToggleBtn(b) : null,
+      darfAendernAbt ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
+        ...(zu ? {disabled:"disabled", style:"opacity:.5"} : {}),
+        onclick:()=>starteKundeAendern(b)}) : null,
+      darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeKundeBestellung(b)}) : null,
+      darfStornieren ? h("button",{class:"btn-danger btn-sm",text:"Stornieren",
+        onclick:()=>storniere("kunde", b, "Kundenbestellung")}) : null
+    );
+    return h("div",{class:"ticket"+(b.storniert?" storniert":"")}, top, body, actions);
+  }
+
   // ---- Liste: Kundenbestellungen ----
   function zeichneKundeListe(container, daten, leerText){
     clear(container);
@@ -960,36 +1062,7 @@ function renderBestellungen(wrap, meineNur){
       container.append(h("div",{class:"empty"}, h("div",{class:"muted",text:leerText||"Keine Kundenbestellungen."})));
       return;
     }
-    for (const b of daten){
-      const kundeName = ((b.vorname||"")+" "+(b.nachname||"")).trim();
-      const top = h("div",{class:"ticket-top"},
-        h("span",{class:"ticket-nr",text:b.bestellnr}),
-        b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : null,
-        h("span",{class:"muted",style:"font-size:13px",text:kundeName}),
-        zeigeAbteilung && b.abteilung ? h("span",{class:"muted",style:"font-size:13px",text:"· "+b.abteilung.name}) : null,
-        h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
-      );
-      const body = h("div",{class:"ticket-body"});
-      kundeInfoPaare(b).forEach(([k,v])=>{
-        body.append(h("div",{class:"kv"}, h("span",{class:"k",text:k}), h("span",{class:"v",text:v})));
-      });
-      body.append(h("div",{class:"kv-div"}));
-      body.append(h("div",{class:"kv"},
-        h("span",{class:"k",text:"Bestelltext"}),
-        h("span",{class:"v",text:b.freitext||""})));
-
-      const zu = istNachBestellschluss(state.konto.bestellschluss_kunde);
-      const actions = b.storniert ? null : h("div",{class:"ticket-actions"},
-        (b.bezahlart==="vor_ort" && darfBezahltSetzen) ? bezahltToggleBtn(b) : null,
-        darfAendernAbt ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
-          ...(zu ? {disabled:"disabled", style:"opacity:.5"} : {}),
-          onclick:()=>starteKundeAendern(b)}) : null,
-        darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeKundeBestellung(b)}) : null,
-        darfStornieren ? h("button",{class:"btn-danger btn-sm",text:"Stornieren",
-          onclick:()=>storniere("kunde", b, "Kundenbestellung")}) : null
-      );
-      container.append(h("div",{class:"ticket"+(b.storniert?" storniert":"")}, top, body, actions));
-    }
+    for (const b of daten) container.append(kundeTicket(b));
   }
 
   // Stornieren (endgültig) — läuft über die RPC, die Rechte + Audit serverseitig setzt.
@@ -1001,40 +1074,43 @@ function renderBestellungen(wrap, meineNur){
     await ladeDaten(); renderApp();
   }
 
-  // ---- Liste: Eventbestellungen ----
+  // Einzelnes Ticket: Eventbestellung
+  function eventTicket(b){
+    const darfEventAendern = rolle==="admin" || rolle==="leitung";
+    const top = h("div",{class:"ticket-top"},
+      h("span",{class:"ticket-nr",text:b.bestellnr}),
+      b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : null,
+      h("span",{class:"muted",style:"font-size:13px",text:b.veranstaltung||""}),
+      h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
+    );
+    const body = h("div",{class:"ticket-body"});
+    eventInfoPaare(b).forEach(([k,v])=>{
+      body.append(h("div",{class:"kv"}, h("span",{class:"k",text:k}), h("span",{class:"v",text:v})));
+    });
+    [["Bestelltext",b.freitext],["Hinweis",b.hinweis],["Aus der Konditorei",b.konditorei_bestellung]]
+      .forEach(([k,v])=>{
+        if (!v) return;
+        body.append(h("div",{class:"kv-div"}));
+        body.append(h("div",{class:"kv"}, h("span",{class:"k",text:k}), h("span",{class:"v",text:v})));
+      });
+    const actions = b.storniert ? null : h("div",{class:"ticket-actions"},
+      darfEventAendern ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
+        onclick:()=>starteEventAendern(b)}) : null,
+      darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeEventBestellung(b)}) : null,
+      darfStornieren ? h("button",{class:"btn-danger btn-sm",text:"Stornieren",
+        onclick:()=>storniere("event", b, "Eventbestellung")}) : null
+    );
+    return h("div",{class:"ticket"+(b.storniert?" storniert":"")}, top, body, actions);
+  }
+
+  // ---- Liste: Eventbestellungen (eigene Ansicht, z. B. für „Meine") ----
   function zeichneEventListe(container, daten, leerText){
     clear(container);
     if (daten.length===0){
       container.append(h("div",{class:"empty"}, h("div",{class:"muted",text:leerText||"Keine Eventbestellungen."})));
       return;
     }
-    const darfEventAendern = rolle==="admin" || rolle==="leitung";
-    for (const b of daten){
-      const top = h("div",{class:"ticket-top"},
-        h("span",{class:"ticket-nr",text:b.bestellnr}),
-        b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : null,
-        h("span",{class:"muted",style:"font-size:13px",text:b.veranstaltung||""}),
-        h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
-      );
-      const body = h("div",{class:"ticket-body"});
-      eventInfoPaare(b).forEach(([k,v])=>{
-        body.append(h("div",{class:"kv"}, h("span",{class:"k",text:k}), h("span",{class:"v",text:v})));
-      });
-      [["Bestelltext",b.freitext],["Hinweis",b.hinweis],["Aus der Konditorei",b.konditorei_bestellung]]
-        .forEach(([k,v])=>{
-          if (!v) return;
-          body.append(h("div",{class:"kv-div"}));
-          body.append(h("div",{class:"kv"}, h("span",{class:"k",text:k}), h("span",{class:"v",text:v})));
-        });
-      const actions = b.storniert ? null : h("div",{class:"ticket-actions"},
-        darfEventAendern ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
-          onclick:()=>starteEventAendern(b)}) : null,
-        darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeEventBestellung(b)}) : null,
-        darfStornieren ? h("button",{class:"btn-danger btn-sm",text:"Stornieren",
-          onclick:()=>storniere("event", b, "Eventbestellung")}) : null
-      );
-      container.append(h("div",{class:"ticket"+(b.storniert?" storniert":"")}, top, body, actions));
-    }
+    for (const b of daten) container.append(eventTicket(b));
   }
 }
 
@@ -1089,7 +1165,7 @@ function sammleTagesStornos(tag){
 }
 
 // Tagesinfoblatt: Datum + Mitteilung der Leitung + Liste der heute stornierten Bestellungen.
-function infoblattSeite(tag, mitteilung, stornoListe){
+function infoblattSeite(tag, mitteilung, stornoListe, mengen, eventAnzahl){
   const seite = h("div",{class:"p-page"},
     h("h2",{text:"Auhof — Tagesinfoblatt"}),
     h("div",{class:"info-datum",text:"Datum: "+fmtTagLang(tag)})
@@ -1100,6 +1176,23 @@ function infoblattSeite(tag, mitteilung, stornoListe){
     seite.append(h("div",{class:"info-mit",text:mitteilung.trim()}));
   else
     seite.append(h("div",{class:"info-leer",text:"— keine —"}));
+
+  // Bestellungen je Abteilung (nur nicht-stornierte = tatsächlich gedruckte)
+  seite.append(h("div",{class:"info-h",text:"Bestellungen je Abteilung"}));
+  const pAbt = (n)=> n + (n===1 ? " Abteilungsbestellung" : " Abteilungsbestellungen");
+  const pKun = (n)=> n + (n===1 ? " Kundenbestellung"      : " Kundenbestellungen");
+  if (mengen && mengen.length){
+    seite.append(h("table",{class:"info-mengen"},
+      ...mengen.map(m=>h("tr",{},
+        h("td",{class:"mabt",text:m.name}),
+        h("td",{text:pAbt(m.abt)+", "+pKun(m.kunde)})
+      ))
+    ));
+  } else {
+    seite.append(h("div",{class:"info-leer",text:"— keine —"}));
+  }
+  seite.append(h("div",{class:"info-events",
+    text:"Eventbestellungen: "+(eventAnzahl||0)}));
 
   seite.append(h("div",{class:"info-h",text:"Stornierte Bestellungen"}));
   if (stornoListe && stornoListe.length){
@@ -1122,21 +1215,34 @@ function infoblattSeite(tag, mitteilung, stornoListe){
 //    - OHNE Haken: jede Bestellung auf einem eigenen Blatt.
 //  Danach die Kundenbestellungen derselben Abteilung: IMMER je ein eigenes Blatt.
 //  Stornierte Bestellungen bekommen KEIN Produktionsblatt (nur Infoblatt).
-function druckeTag(abtBestellungen, kundeBestellungen, tag, mitteilung, stornoListe){
+function druckeTag(abtBestellungen, kundeBestellungen, eventBestellungen, tag, mitteilung, stornoListe){
   tag               = tag || heuteZuerich();
   stornoListe       = stornoListe || [];
   abtBestellungen   = (abtBestellungen   || []).filter(b=>!b.storniert);
   kundeBestellungen = (kundeBestellungen || []).filter(b=>!b.storniert);
+  eventBestellungen = (eventBestellungen || []).filter(b=>!b.storniert);
 
   const hatInfo = !!(mitteilung && mitteilung.trim()) || stornoListe.length>0;
-  if (abtBestellungen.length===0 && kundeBestellungen.length===0 && !hatInfo){
+  if (abtBestellungen.length===0 && kundeBestellungen.length===0
+      && eventBestellungen.length===0 && !hatInfo){
     toast("Für diesen Tag gibt es nichts zu drucken.","err"); return;
   }
   const area = document.getElementById("print-area");
   clear(area);
 
-  // Infoblatt immer als erste Seite
-  area.append(infoblattSeite(tag, mitteilung, stornoListe));
+  // Mengen je Abteilung fürs Infoblatt: ALLE Abteilungen listen (0 wenn nichts).
+  const abtKey = (x)=> x ? (x.kuerzel || x.name || "—") : "—";
+  const mengen = (state.abteilungenListe||[]).map(a=>{
+    const k = a.kuerzel || a.name;
+    return {
+      name:  a.name,
+      abt:   abtBestellungen.filter(b=>abtKey(b.abteilung)===k).length,
+      kunde: kundeBestellungen.filter(b=>abtKey(b.abteilung)===k).length
+    };
+  });
+
+  // Infoblatt immer als erste Seite (inkl. Mengen je Abteilung + Event-Anzahl)
+  area.append(infoblattSeite(tag, mitteilung, stornoListe, mengen, eventBestellungen.length));
 
   function posTabelle(b){
     return h("table",{},
@@ -1199,6 +1305,12 @@ function druckeTag(abtBestellungen, kundeBestellungen, tag, mitteilung, stornoLi
     const korders = [...g.kunde].sort((x,y)=>String(x.bestellnr).localeCompare(String(y.bestellnr)));
     korders.forEach(b=> area.append(kundeDruckSeite(b, g.name)));
   }
+
+  // 3) Eventbestellungen zuletzt: je ein eigenes Blatt (Vorlagen-Stil)
+  [...eventBestellungen]
+    .sort((x,y)=>String(x.bestellnr).localeCompare(String(y.bestellnr)))
+    .forEach(b=> area.append(eventDruckSeite(b)));
+
   window.print();
 }
 
