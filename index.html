@@ -387,7 +387,7 @@ async function ladeDaten(){
 
   if (r!=="abteilung" || true){
     const b = await sb.from("bestellungen")
-      .select(`id,bestellnr,jahr,monat,laufnr,erstellt_am,storniert,storniert_am,storniert_von,
+      .select(`id,bestellnr,jahr,monat,laufnr,erstellt_am,storniert,storniert_am,storniert_von,freitext,
                abteilung:konten!bestellungen_abteilung_id_fkey(name,kuerzel,sammelbestellung),
                positionen:bestellpositionen(menge, artikel_id, artikel(name))`)
       .order("erstellt_am",{ascending:false});
@@ -727,6 +727,14 @@ function renderBestellen(wrap, editB=null){
     ohneGruppe.forEach(a=>wrap.append(stepRow(a)));
   }
 
+  // Sonstiges (optional, Freitext ganz unten nach den Artikeln)
+  const anmerkungI = h("textarea",{rows:"3",placeholder:"Optional …"},
+    editB?.freitext || "");
+  wrap.append(
+    h("div",{class:"group-h"}, h("h3",{text:"Sonstiges"})),
+    h("div",{class:"card",style:"padding:.6rem;margin-bottom:5rem"}, anmerkungI)
+  );
+
   // Summenleiste
   const info = h("div",{class:"info"});
   const sendBtn = h("button",{class:"btn",text: editB ? "Änderung speichern" : "Bestellung senden"});
@@ -757,11 +765,12 @@ function renderBestellen(wrap, editB=null){
     if (positionen.length===0) return;
     sendBtn.disabled=true; sendBtn.textContent = editB ? "Speichern…" : "Senden…";
 
+    const freitext = anmerkungI.value.trim();
     let data, error;
     if (editB){
-      ({ data, error } = await sb.rpc("bestellung_aendern", { p_bestellung_id: editB.id, positionen }));
+      ({ data, error } = await sb.rpc("bestellung_aendern", { p_bestellung_id: editB.id, positionen, p_freitext: freitext }));
     } else {
-      ({ data, error } = await sb.rpc("bestellung_anlegen", { positionen }));
+      ({ data, error } = await sb.rpc("bestellung_anlegen", { positionen, p_freitext: freitext }));
     }
 
     sendBtn.disabled=false; sendBtn.textContent = editB ? "Änderung speichern" : "Bestellung senden";
@@ -985,6 +994,12 @@ function renderBestellungen(wrap, meineNur){
         h("span",{class:"n",text:p.artikel?.name || "(Artikel entfernt)"})
       ));
     });
+    if (b.freitext){
+      body.append(h("div",{class:"kv-div"}));
+      body.append(h("div",{class:"kv"},
+        h("span",{class:"k",text:"Sonstiges"}),
+        h("span",{class:"v",text:b.freitext})));
+    }
     const zu = istNachBestellschluss(state.konto.bestellschluss);
     const actions = b.storniert ? null : h("div",{class:"ticket-actions"},
       darfAendernAbt ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
@@ -1128,7 +1143,8 @@ function druckeBestellung(b){
     h("div",{class:"p-nr",style:"margin-top:6px;font-size:18px",text:b.bestellnr}),
     h("div",{style:"margin-top:4px",text:(b.abteilung?.name? "Abteilung: "+b.abteilung.name : "")}),
     h("div",{style:"color:#555",text:"Datum: "+fmtDatum(b.erstellt_am)}),
-    tbl
+    tbl,
+    ...(b.freitext ? [h("div",{class:"p-ft-h",text:"Sonstiges"}), h("div",{class:"p-ft",text:b.freitext})] : [])
   );
   window.print();
 }
@@ -1285,7 +1301,8 @@ function druckeTag(abtBestellungen, kundeBestellungen, eventBestellungen, tag, m
         orders.forEach(b=>{
           seite.append(h("div",{class:"p-sub"},
             h("div",{class:"p-nr",text:b.bestellnr}),
-            posTabelle(b)
+            posTabelle(b),
+            ...(b.freitext ? [h("div",{class:"p-ft-h",text:"Sonstiges"}), h("div",{class:"p-ft",text:b.freitext})] : [])
           ));
         });
         area.append(seite);
@@ -1296,7 +1313,8 @@ function druckeTag(abtBestellungen, kundeBestellungen, eventBestellungen, tag, m
             h("div",{class:"p-nr",style:"margin-top:6px;font-size:18px",text:b.bestellnr}),
             h("div",{style:"margin-top:4px",text:"Abteilung: "+g.name}),
             h("div",{style:"color:#555",text:"Datum: "+fmtDatum(b.erstellt_am)}),
-            posTabelle(b)
+            posTabelle(b),
+            ...(b.freitext ? [h("div",{class:"p-ft-h",text:"Sonstiges"}), h("div",{class:"p-ft",text:b.freitext})] : [])
           ));
         });
       }
@@ -1873,7 +1891,15 @@ function artikelZeile(a){
     onclick:async ()=>{
       if (!confirm('Artikel „'+a.name+'“ löschen?')) return;
       const { error } = await sb.from("artikel").delete().eq("id",a.id);
-      if (error){ toast("Fehler: "+error.message,"err"); return; }
+      if (error){
+        // 23503 = foreign_key_violation → Artikel wird in Bestellungen verwendet
+        if (error.code==="23503" || /foreign key/i.test(error.message||"")){
+          toast('„'+a.name+'“ wurde bereits bestellt und kann nicht gelöscht werden. Bitte stattdessen ausblenden.',"err");
+        } else {
+          toast("Fehler: "+error.message,"err");
+        }
+        return;
+      }
       toast("Artikel gelöscht.","ok"); await ladeDaten(); renderApp();
     }});
 
