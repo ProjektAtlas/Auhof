@@ -129,6 +129,10 @@
   .badge-storno{display:inline-block; font-size:11px; font-weight:600; text-transform:uppercase;
     letter-spacing:.06em; color:var(--danger); border:1px solid #4a2c30; background:#2c1c1e;
     border-radius:999px; padding:.08rem .5rem}
+  .badge-druck{display:inline-block; font-size:11px; font-weight:600; text-transform:uppercase;
+    letter-spacing:.06em; border-radius:999px; padding:.08rem .5rem}
+  .badge-offen{color:var(--dim); border:1px solid var(--line); background:var(--panel2)}
+  .badge-gedruckt{color:var(--ok); border:1px solid #3a462c; background:#20261a}
 
   /* Abteilungs-Gruppen im zusammengeführten Bestellungen-Tab */
   .gruppe-h{display:flex; align-items:baseline; gap:.6rem; flex-wrap:wrap;
@@ -387,7 +391,8 @@ async function ladeDaten(){
 
   if (r!=="abteilung" || true){
     const b = await sb.from("bestellungen")
-      .select(`id,bestellnr,jahr,monat,laufnr,erstellt_am,storniert,storniert_am,storniert_von,freitext,
+      .select(`id,bestellnr,jahr,monat,laufnr,erstellt_am,storniert,storniert_am,storniert_von,
+               gedruckt,gedruckt_am,gedruckt_von,freitext,
                abteilung:konten!bestellungen_abteilung_id_fkey(name,kuerzel,sammelbestellung),
                positionen:bestellpositionen(menge, artikel_id, artikel(name))`)
       .order("erstellt_am",{ascending:false});
@@ -397,6 +402,7 @@ async function ladeDaten(){
   // Kundenbestellungen (RLS: eigene bzw. für Konditorei/Leitung/Admin alle)
   const kb = await sb.from("kundenbestellungen")
     .select(`id,bestellnr,jahr,monat,laufnr,erstellt_am,storniert,storniert_am,storniert_von,
+             gedruckt,gedruckt_am,gedruckt_von,
              vorname,nachname,email,telefon,bezahlart,bezahlt,modus,
              rechnungsadresse,lieferadresse,liefertag,lieferzeit,freitext,
              abteilung_id,abhol_abteilung_id,
@@ -953,9 +959,11 @@ function renderBestellungen(wrap, meineNur){
 
     if (printBtn){
       const tag = aktTag();
-      const produktion = abtL.filter(b=>!b.storniert).length
-                       + kundeL.filter(b=>!b.storniert).length
-                       + evL.filter(b=>!b.storniert).length;
+      // „Tag drucken" berücksichtigt nur offene Bestellungen (nicht storniert, nicht gedruckt);
+      // zusätzlich bleibt der Button für einen reinen Infoblatt-Druck (Stornos/Mitteilung) aktiv.
+      const produktion = abtL.filter(b=>!b.storniert && !b.gedruckt).length
+                       + kundeL.filter(b=>!b.storniert && !b.gedruckt).length
+                       + evL.filter(b=>!b.storniert && !b.gedruckt).length;
       const hatStornos = sammleTagesStornos(tag).length > 0;
       const hatMitt = (state.tagesmitteilungen||[]).some(m=>String(m.datum).slice(0,10)===tag);
       const etwas = produktion>0 || hatStornos || hatMitt;
@@ -984,7 +992,7 @@ function renderBestellungen(wrap, meineNur){
   function abtTicket(b){
     const top = h("div",{class:"ticket-top"},
       h("span",{class:"ticket-nr",text:b.bestellnr}),
-      b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : null,
+      b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : druckBadge(b),
       h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
     );
     const body = h("div",{class:"ticket-body"});
@@ -1006,6 +1014,8 @@ function renderBestellungen(wrap, meineNur){
         ...(zu ? {disabled:"disabled", style:"opacity:.5"} : {}),
         onclick:()=>starteAendern(b)}) : null,
       darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeBestellung(b)}) : null,
+      (darfDrucken && b.gedruckt) ? h("button",{class:"btn-ghost btn-sm",text:"Druck zurücksetzen",
+        onclick:()=>setzeDruckZurueck("abteilung", b, "Bestellung")}) : null,
       darfStornieren ? h("button",{class:"btn-danger btn-sm",text:"Stornieren",
         onclick:()=>storniere("abteilung", b, "Bestellung")}) : null
     );
@@ -1044,7 +1054,7 @@ function renderBestellungen(wrap, meineNur){
     const kundeName = ((b.vorname||"")+" "+(b.nachname||"")).trim();
     const top = h("div",{class:"ticket-top"},
       h("span",{class:"ticket-nr",text:b.bestellnr}),
-      b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : null,
+      b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : druckBadge(b),
       h("span",{class:"muted",style:"font-size:13px",text:kundeName}),
       h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
     );
@@ -1064,6 +1074,8 @@ function renderBestellungen(wrap, meineNur){
         ...(zu ? {disabled:"disabled", style:"opacity:.5"} : {}),
         onclick:()=>starteKundeAendern(b)}) : null,
       darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeKundeBestellung(b)}) : null,
+      (darfDrucken && b.gedruckt) ? h("button",{class:"btn-ghost btn-sm",text:"Druck zurücksetzen",
+        onclick:()=>setzeDruckZurueck("kunde", b, "Kundenbestellung")}) : null,
       darfStornieren ? h("button",{class:"btn-danger btn-sm",text:"Stornieren",
         onclick:()=>storniere("kunde", b, "Kundenbestellung")}) : null
     );
@@ -1089,12 +1101,21 @@ function renderBestellungen(wrap, meineNur){
     await ladeDaten(); renderApp();
   }
 
+  // Druckstatus wieder auf „offen" setzen — beim nächsten „Tag drucken" ist die
+  // Bestellung dann wieder dabei. Reversibel, daher ohne Rückfrage.
+  async function setzeDruckZurueck(art, b, label){
+    const { error } = await sb.rpc("bestellung_druck_zuruecksetzen", { p_art:art, p_id:b.id });
+    if (error){ toast("Zurücksetzen fehlgeschlagen: "+error.message,"err"); return; }
+    toast(label+" "+b.bestellnr+" wieder auf offen gesetzt.","ok");
+    await ladeDaten(); renderApp();
+  }
+
   // Einzelnes Ticket: Eventbestellung
   function eventTicket(b){
     const darfEventAendern = rolle==="admin" || rolle==="leitung";
     const top = h("div",{class:"ticket-top"},
       h("span",{class:"ticket-nr",text:b.bestellnr}),
-      b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : null,
+      b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : druckBadge(b),
       h("span",{class:"muted",style:"font-size:13px",text:b.veranstaltung||""}),
       h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
     );
@@ -1112,6 +1133,8 @@ function renderBestellungen(wrap, meineNur){
       darfEventAendern ? h("button",{class:"btn-ghost btn-sm",text:"Ändern",
         onclick:()=>starteEventAendern(b)}) : null,
       darfDrucken ? h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeEventBestellung(b)}) : null,
+      (darfDrucken && b.gedruckt) ? h("button",{class:"btn-ghost btn-sm",text:"Druck zurücksetzen",
+        onclick:()=>setzeDruckZurueck("event", b, "Eventbestellung")}) : null,
       darfStornieren ? h("button",{class:"btn-danger btn-sm",text:"Stornieren",
         onclick:()=>storniere("event", b, "Eventbestellung")}) : null
     );
@@ -1129,7 +1152,23 @@ function renderBestellungen(wrap, meineNur){
   }
 }
 
-function druckeBestellung(b){
+// Badge „Offen" / „Gedruckt" fürs Ticket (nur für nicht-stornierte Bestellungen).
+function druckBadge(b){
+  if (b.storniert) return null;
+  return b.gedruckt
+    ? h("span",{class:"badge-druck badge-gedruckt",text:"Gedruckt"})
+    : h("span",{class:"badge-druck badge-offen",text:"Offen"});
+}
+
+// Markiert Bestellungen als gedruckt (Batch über alle Arten). Rechte + „nur offene"
+// werden serverseitig in der RPC geprüft. items = {abteilung:[id],kunde:[id],event:[id]}.
+async function markiereGedruckt(items){
+  const { error } = await sb.rpc("bestellung_gedruckt_setzen", { p_items: items });
+  if (error){ toast("Druckstatus konnte nicht gespeichert werden: "+error.message,"err"); return false; }
+  return true;
+}
+
+async function druckeBestellung(b){
   const area = document.getElementById("print-area");
   clear(area);
   const tbl = h("table",{},
@@ -1147,6 +1186,7 @@ function druckeBestellung(b){
     ...(b.freitext ? [h("div",{class:"p-ft-h",text:"Sonstiges"}), h("div",{class:"p-ft",text:b.freitext})] : [])
   );
   window.print();
+  if (await markiereGedruckt({abteilung:[b.id]})){ await ladeDaten(); renderApp(); }
 }
 
 // Alle an einem bestimmten Tag (Europe/Zurich) stornierten Bestellungen –
@@ -1231,12 +1271,13 @@ function infoblattSeite(tag, mitteilung, stornoListe, mengen, eventAnzahl){
 //    - OHNE Haken: jede Bestellung auf einem eigenen Blatt.
 //  Danach die Kundenbestellungen derselben Abteilung: IMMER je ein eigenes Blatt.
 //  Stornierte Bestellungen bekommen KEIN Produktionsblatt (nur Infoblatt).
-function druckeTag(abtBestellungen, kundeBestellungen, eventBestellungen, tag, mitteilung, stornoListe){
+async function druckeTag(abtBestellungen, kundeBestellungen, eventBestellungen, tag, mitteilung, stornoListe){
   tag               = tag || heuteZuerich();
   stornoListe       = stornoListe || [];
-  abtBestellungen   = (abtBestellungen   || []).filter(b=>!b.storniert);
-  kundeBestellungen = (kundeBestellungen || []).filter(b=>!b.storniert);
-  eventBestellungen = (eventBestellungen || []).filter(b=>!b.storniert);
+  // Nur offene (nicht stornierte, noch nicht gedruckte) Bestellungen drucken.
+  abtBestellungen   = (abtBestellungen   || []).filter(b=>!b.storniert && !b.gedruckt);
+  kundeBestellungen = (kundeBestellungen || []).filter(b=>!b.storniert && !b.gedruckt);
+  eventBestellungen = (eventBestellungen || []).filter(b=>!b.storniert && !b.gedruckt);
 
   const hatInfo = !!(mitteilung && mitteilung.trim()) || stornoListe.length>0;
   if (abtBestellungen.length===0 && kundeBestellungen.length===0
@@ -1330,6 +1371,16 @@ function druckeTag(abtBestellungen, kundeBestellungen, eventBestellungen, tag, m
     .forEach(b=> area.append(eventDruckSeite(b)));
 
   window.print();
+
+  // Genau die soeben gedruckten (offenen) Bestellungen als gedruckt markieren.
+  const items = {
+    abteilung: abtBestellungen.map(b=>b.id),
+    kunde:     kundeBestellungen.map(b=>b.id),
+    event:     eventBestellungen.map(b=>b.id)
+  };
+  if (items.abteilung.length || items.kunde.length || items.event.length){
+    if (await markiereGedruckt(items)){ await ladeDaten(); renderApp(); }
+  }
 }
 
 // =====================================================================
@@ -1373,11 +1424,12 @@ function kundeDruckSeite(b, abtName){
   );
 }
 
-function druckeKundeBestellung(b){
+async function druckeKundeBestellung(b){
   const area = document.getElementById("print-area");
   clear(area);
   area.append(kundeDruckSeite(b, b.abteilung?.name || null));
   window.print();
+  if (await markiereGedruckt({kunde:[b.id]})){ await ladeDaten(); renderApp(); }
 }
 
 // =====================================================================
@@ -1454,11 +1506,12 @@ function eventDruckSeite(b){
   return seite;
 }
 
-function druckeEventBestellung(b){
+async function druckeEventBestellung(b){
   const area = document.getElementById("print-area");
   clear(area);
   area.append(eventDruckSeite(b));
   window.print();
+  if (await markiereGedruckt({event:[b.id]})){ await ladeDaten(); renderApp(); }
 }
 
 function starteEventAendern(b){
