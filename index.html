@@ -2128,12 +2128,45 @@ function renderAbteilungen(wrap){
         : ('Sammelbestellung für „'+k.name+'“ deaktiviert.'),"ok");
     });
 
+    // Name + Kürzel: normal als Text, per "Umbenennen" editierbar.
+    // Umbenennen ändert serverseitig auch die Login-E-Mail -> Warnhinweis vor dem Speichern.
+    const nameCell    = h("td",{text:k.name});
+    const kuerzelCell = h("td",{class:"mono",text:k.kuerzel||"—"});
+    const umbenennenBtn = h("button",{class:"btn-ghost btn-sm",text:"Umbenennen",onclick:()=>{
+      clear(nameCell); clear(kuerzelCell);
+      const nameI2    = h("input",{type:"text",value:k.name,style:"max-width:140px"});
+      const kuerzelI2 = h("input",{type:"text",value:k.kuerzel||"",style:"max-width:90px"});
+      const okBtn = h("button",{class:"btn btn-sm",text:"OK",onclick:async ()=>{
+        const neuerName    = nameI2.value.trim();
+        const neuesKuerzel = kuerzelI2.value.trim();
+        if (!/^[A-Za-z0-9]+$/.test(neuerName)) return toast("Name: nur Buchstaben/Zahlen, keine Leerzeichen.","err");
+        if (!neuesKuerzel) return toast("Kürzel fehlt.","err");
+        if (neuerName===k.name && neuesKuerzel===(k.kuerzel||"")){ renderApp(); return; }
+        const nameAendertSich = neuerName.toLowerCase() !== k.name.toLowerCase();
+        const warn = nameAendertSich
+          ? ('Abteilung „'+k.name+'“ zu „'+neuerName+'“ umbenennen?\n\nACHTUNG: Der Login-Name ändert sich damit ebenfalls von „'+k.name+'“ zu „'+neuerName+'“. Das Passwort bleibt gleich, aber die Abteilung muss sich künftig mit „'+neuerName+'“ anmelden.')
+          : ('Kürzel von „'+k.name+'“ zu „'+neuesKuerzel+'“ ändern?');
+        if (!confirm(warn)) return;
+        okBtn.disabled=true; okBtn.textContent="…";
+        const { error } = await rufeFunktion({aktion:"abteilung_umbenennen", id:k.id, name:neuerName, kuerzel:neuesKuerzel});
+        okBtn.disabled=false; okBtn.textContent="OK";
+        if (error){ toast(error,"err"); return; }
+        toast('Abteilung umbenannt zu „'+neuerName+'“.',"ok");
+        await ladeDaten(); renderApp();
+      }});
+      const cancelBtn = h("button",{class:"btn-ghost btn-sm",text:"Abbrechen",onclick:()=>renderApp()});
+      nameCell.append(nameI2);
+      kuerzelCell.append(h("div",{class:"row"}, kuerzelI2, okBtn, cancelBtn));
+      nameI2.focus();
+    }});
+
     tbody.append(h("tr",{},
-      h("td",{text:k.name}),
-      h("td",{class:"mono",text:k.kuerzel||"—"}),
+      nameCell,
+      kuerzelCell,
       zelleAbt,
       zelleKunde,
-      h("td",{style:"text-align:center"}, sammelCb)
+      h("td",{style:"text-align:center"}, sammelCb),
+      h("td",{style:"text-align:right"}, umbenennenBtn)
     ));
   });
   wrap.append(h("div",{class:"card",style:"padding:.6rem"},
@@ -2142,7 +2175,7 @@ function renderAbteilungen(wrap){
         h("thead",{}, h("tr",{},
           h("th",{text:"Abteilung"}), h("th",{text:"Kürzel"}),
           h("th",{text:"Bestellschluss Abteilung"}), h("th",{text:"Bestellschluss Kunden"}),
-          h("th",{text:"Sammelbestellung"}))),
+          h("th",{text:"Sammelbestellung"}), h("th",{text:""}))),
         tbody
       )
     ),
