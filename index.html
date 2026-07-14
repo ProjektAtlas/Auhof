@@ -257,6 +257,9 @@ const state = {
   editEvent:null,        // aktuell zu ändernde Eventbestellung (oder null)
   listenModus:"abteilung", // Umschalter in den Listen: "abteilung" | "kunde" | "event"
   bestellTag:null,       // gewählter Tag in "Bestellungen" (YYYY-MM-DD), null = heute
+  meineTag:null,         // gewählter Tag in „Meine Bestellungen" (YYYY-MM-DD), null = heute
+  geladeneTage:new Set(),// Tage ausserhalb des Ladefensters, die gezielt nachgeladen wurden
+  ladeFehler:null,       // Fehlermeldung, falls das Laden der Daten fehlschlug
   auswVon:null, auswBis:null, // Zeitraum in "Auswertung" (YYYY-MM-DD), null = heute
   auswAbt:"",            // Abteilungsfilter (Kürzel) in "Auswertung", "" = alle
   tagesinfoDatum:null,   // gewählter Tag im Untertab „Tagesmitteilung" (null = heute)
@@ -294,8 +297,8 @@ function toast(msg, kind=""){
 const ROLLE_LABEL = {admin:"Admin", leitung:"Leitung", abteilung:"Abteilung", konditorei:"Konditorei"};
 function fmtDatum(iso){
   const d=new Date(iso);
-  return d.toLocaleDateString("de-CH",{day:"2-digit",month:"2-digit",year:"numeric"})
-       + " " + d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"});
+  return d.toLocaleDateString("de-CH",{timeZone:"Europe/Zurich",day:"2-digit",month:"2-digit",year:"numeric"})
+       + " " + d.toLocaleTimeString("de-CH",{timeZone:"Europe/Zurich",hour:"2-digit",minute:"2-digit"});
 }
 // Reines Datum "YYYY-MM-DD" -> "TT.MM.JJJJ" (ohne Zeitzonen-Verschiebung)
 function fmtTag(d){
@@ -370,72 +373,160 @@ async function ladeKontoUndStarten(){
   return { ok:true };
 }
 
-async function logout(){
-  await sb.auth.signOut();
+function resetState(){
   state.konto=null; state.cart={}; state.tab=null; state.subtab=null;
   state.editBestellung=null; state.editProbleme=[];
   state.editKunde=null; state.editEvent=null; state.listenModus="abteilung";
   state.kundenbestellungen=[]; state.eventbestellungen=[]; state.abteilungenListe=[];
   state.tagesmitteilungen=[]; state.tagesinfoDatum=null; state.bestellTag=null;
+  state.meineTag=null; state.geladeneTage=new Set(); state.ladeFehler=null;
   state.auswVon=null; state.auswBis=null; state.auswAbt="";
+}
+
+let logoutManuell = false;
+async function logout(){
+  logoutManuell = true;
+  await sb.auth.signOut();
+  logoutManuell = false;
+  resetState();
   renderLogin();
 }
 
+// Abgelaufene/ungültige Sitzung: zurück zum Login mit Hinweis
+function sitzungBeendet(){
+  if (!state.konto) return;
+  resetState();
+  renderLogin();
+  toast("Deine Sitzung ist abgelaufen. Bitte melde dich neu an.","err");
+}
+
+// Reagiert u.a. darauf, wenn das Token nicht mehr erneuert werden kann
+sb.auth.onAuthStateChange((event)=>{
+  if (event==="SIGNED_OUT" && !logoutManuell) sitzungBeendet();
+});
+
 // =====================================================================
 //  Daten laden (je nach Rolle)
+//  Standardmässig werden nur die letzten LADE_TAGE Tage geladen; ältere
+//  Tage werden bei Bedarf gezielt über ladeTagNach() nachgeladen.
 // =====================================================================
-async function ladeDaten(){
-  const r = state.konto.rolle;
+const LADE_TAGE = 14;
+function ladeFensterStart(){ return tagPlus(heuteZuerich(), -LADE_TAGE); }
 
-  const g = await sb.from("gruppen").select("*").order("sortierung").order("name");
-  state.gruppen = g.data || [];
-
-  const a = await sb.from("artikel").select("*").order("name");
-  state.artikel = a.data || [];
-
-  if (r!=="abteilung" || true){
-    const b = await sb.from("bestellungen")
-      .select(`id,bestellnr,jahr,monat,laufnr,erstellt_am,storniert,storniert_am,storniert_von,
+const SELECT_ABT_BESTELLUNG = `id,bestellnr,jahr,monat,laufnr,erstellt_am,storniert,storniert_am,storniert_von,
                gedruckt,gedruckt_am,gedruckt_von,freitext,
                abteilung:konten!bestellungen_abteilung_id_fkey(name,kuerzel,sammelbestellung),
-               positionen:bestellpositionen(menge, artikel_id, artikel(name))`)
-      .order("erstellt_am",{ascending:false});
-    state.bestellungen = b.data || [];
-  }
-
-  // Kundenbestellungen (RLS: eigene bzw. für Konditorei/Leitung/Admin alle)
-  const kb = await sb.from("kundenbestellungen")
-    .select(`id,bestellnr,jahr,monat,laufnr,erstellt_am,storniert,storniert_am,storniert_von,
+               positionen:bestellpositionen(menge, artikel_id, artikel(name))`;
+const SELECT_KUNDE_BESTELLUNG = `id,bestellnr,jahr,monat,laufnr,erstellt_am,storniert,storniert_am,storniert_von,
              gedruckt,gedruckt_am,gedruckt_von,
              vorname,nachname,email,telefon,bezahlart,bezahlt,modus,
              rechnungsadresse,lieferadresse,liefertag,lieferzeit,freitext,
              abteilung_id,abhol_abteilung_id,
-             abteilung:konten!kundenbestellungen_abteilung_id_fkey(name,kuerzel,sammelbestellung)`)
-    .order("erstellt_am",{ascending:false});
-  state.kundenbestellungen = kb.data || [];
+             abteilung:konten!kundenbestellungen_abteilung_id_fkey(name,kuerzel,sammelbestellung)`;
 
-  // Abteilungs-Liste (id,name,kuerzel) für die Abhol-Auswahl im Kundenformular
-  const al = await sb.rpc("abteilungen_liste");
-  state.abteilungenListe = al.data || [];
+async function ladeDaten(){
+  const r = state.konto.rolle;
+  state.geladeneTage = new Set();   // nach Komplett-Reload alles neu bewerten
+  // ±1 Tag Puffer wegen Zeitzone, exakte Filterung erfolgt clientseitig nach Zürich-Tag
+  const fensterVon = tagPlus(ladeFensterStart(),-1)+"T00:00:00Z";
 
-  // Eventbestellungen (nur Leitung/Admin/Konditorei sehen sie)
-  state.eventbestellungen = [];
+  // Alle Abfragen parallel starten (deutlich schnellerer Start)
+  const abfragen = {
+    gruppen: sb.from("gruppen").select("*").order("sortierung").order("name"),
+    artikel: sb.from("artikel").select("*").order("name"),
+    // Abteilungs-/Kundenbestellungen (RLS: eigene bzw. für Konditorei/Leitung/Admin alle)
+    bestellungen: sb.from("bestellungen").select(SELECT_ABT_BESTELLUNG)
+      .gte("erstellt_am", fensterVon).order("erstellt_am",{ascending:false}),
+    kundenbestellungen: sb.from("kundenbestellungen").select(SELECT_KUNDE_BESTELLUNG)
+      .gte("erstellt_am", fensterVon).order("erstellt_am",{ascending:false}),
+    // Abteilungs-Liste (id,name,kuerzel) für die Abhol-Auswahl im Kundenformular
+    abteilungenListe: sb.rpc("abteilungen_liste"),
+  };
   if (r==="admin" || r==="leitung" || r==="konditorei"){
-    const eb = await sb.from("eventbestellungen").select("*").order("erstellt_am",{ascending:false});
-    state.eventbestellungen = eb.data || [];
+    // Eventbestellungen + Tagesmitteilungen (fürs Infoblatt beim Tagesdruck)
+    abfragen.eventbestellungen = sb.from("eventbestellungen").select("*")
+      .gte("erstellt_am", fensterVon).order("erstellt_am",{ascending:false});
+    abfragen.tagesmitteilungen = sb.from("tagesmitteilungen").select("*").order("datum",{ascending:false});
   }
-
-  // Tagesmitteilungen (fürs Infoblatt beim Tagesdruck bzw. zum Bearbeiten)
-  state.tagesmitteilungen = [];
-  if (r==="admin" || r==="leitung" || r==="konditorei"){
-    const tm = await sb.from("tagesmitteilungen").select("*").order("datum",{ascending:false});
-    state.tagesmitteilungen = tm.data || [];
-  }
-
   if (r==="admin" || r==="leitung"){
-    const k = await sb.from("konten").select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde,sammelbestellung").order("rolle").order("name");
-    state.konten = k.data || [];
+    abfragen.konten = sb.from("konten")
+      .select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde,sammelbestellung")
+      .order("rolle").order("name");
   }
+
+  const namen = Object.keys(abfragen);
+  let ergebnisse;
+  try {
+    ergebnisse = await Promise.all(Object.values(abfragen));
+  } catch (e) {
+    state.ladeFehler = "Keine Verbindung zum Server.";
+    return { error: state.ladeFehler };
+  }
+
+  const fehler = ergebnisse.find(x=>x && x.error);
+  if (fehler){
+    const msg = fehler.error.message || "Unbekannter Fehler";
+    // Ungültige/abgelaufene Sitzung -> zurück zum Login
+    if (fehler.error.code==="PGRST301" || /JWT/i.test(msg)){
+      sitzungBeendet();
+      return { error: msg };
+    }
+    state.ladeFehler = msg;
+    return { error: msg };
+  }
+  state.ladeFehler = null;
+
+  const map = {};
+  namen.forEach((n,i)=> map[n] = ergebnisse[i].data || []);
+  state.gruppen            = map.gruppen;
+  state.artikel            = map.artikel;
+  state.bestellungen       = map.bestellungen;
+  state.kundenbestellungen = map.kundenbestellungen;
+  state.abteilungenListe   = map.abteilungenListe;
+  state.eventbestellungen  = map.eventbestellungen || [];
+  state.tagesmitteilungen  = map.tagesmitteilungen || [];
+  if (map.konten) state.konten = map.konten;
+  return { ok:true };
+}
+
+// ---- Gezieltes Nachladen eines Tages ausserhalb des Ladefensters ----
+function brauchtNachladen(tag){
+  return !!tag && tag < ladeFensterStart() && !state.geladeneTage.has(tag);
+}
+function mergeNachId(ziel, neue){
+  const ids = new Set(ziel.map(x=>x.id));
+  for (const n of (neue||[])) if (!ids.has(n.id)) ziel.push(n);
+  ziel.sort((a,b)=>String(b.erstellt_am).localeCompare(String(a.erstellt_am)));
+}
+async function ladeTagNach(tag){
+  if (!brauchtNachladen(tag)) return true;
+  const r = state.konto.rolle;
+  // ±1 Tag Puffer wegen Zeitzone, exakte Filterung erfolgt clientseitig nach Zürich-Tag
+  const von = tagPlus(tag,-1)+"T00:00:00Z";
+  const bis = tagPlus(tag, 1)+"T23:59:59Z";
+
+  const b = await sb.from("bestellungen").select(SELECT_ABT_BESTELLUNG)
+    .gte("erstellt_am", von).lte("erstellt_am", bis)
+    .order("erstellt_am",{ascending:false});
+  if (b.error){ toast("Nachladen fehlgeschlagen: "+b.error.message,"err"); return false; }
+  mergeNachId(state.bestellungen, b.data);
+
+  const kb = await sb.from("kundenbestellungen").select(SELECT_KUNDE_BESTELLUNG)
+    .gte("erstellt_am", von).lte("erstellt_am", bis)
+    .order("erstellt_am",{ascending:false});
+  if (kb.error){ toast("Nachladen fehlgeschlagen: "+kb.error.message,"err"); return false; }
+  mergeNachId(state.kundenbestellungen, kb.data);
+
+  if (r==="admin" || r==="leitung" || r==="konditorei"){
+    const eb = await sb.from("eventbestellungen").select("*")
+      .gte("erstellt_am", von).lte("erstellt_am", bis)
+      .order("erstellt_am",{ascending:false});
+    if (eb.error){ toast("Nachladen fehlgeschlagen: "+eb.error.message,"err"); return false; }
+    mergeNachId(state.eventbestellungen, eb.data);
+  }
+
+  state.geladeneTage.add(tag);
+  return true;
 }
 
 function tabsFor(rolle){
@@ -464,6 +555,7 @@ function renderLogin(){
     renderApp();
   }
   btn.addEventListener("click", tryLogin);
+  nameI.addEventListener("keydown", e=>{ if(e.key==="Enter") tryLogin(); });
   pwI.addEventListener("keydown", e=>{ if(e.key==="Enter") tryLogin(); });
 
   app.append(
@@ -484,8 +576,29 @@ function renderLogin(){
 // =====================================================================
 //  Render: App-Rahmen
 // =====================================================================
+function renderLadeFehler(){
+  const btn = h("button",{class:"btn",style:"width:100%",text:"Erneut versuchen"});
+  btn.addEventListener("click", async ()=>{
+    btn.disabled=true; btn.textContent="Lädt…";
+    await ladeDaten();
+    renderApp();
+  });
+  app.append(h("div",{class:"login"},
+    h("div",{class:"card"},
+      h("div",{class:"stack"},
+        h("h2",{text:"Daten konnten nicht geladen werden"}),
+        h("div",{class:"muted",text:state.ladeFehler||"Unbekannter Fehler."}),
+        btn,
+        h("button",{class:"btn-ghost",style:"width:100%",text:"Abmelden",onclick:logout})
+      )
+    )
+  ));
+}
+
 function renderApp(){
   clear(app);
+  if (!state.konto) return renderLogin();
+  if (state.ladeFehler) return renderLadeFehler();
   const k = state.konto;
   const tabDefs = tabsFor(k.rolle);
   if (!state.tab || !tabDefs.find(t=>t[0]===state.tab)) state.tab = tabDefs[0][0];
@@ -842,12 +955,47 @@ function renderBestellungen(wrap, meineNur){
   // =========================================================
   if (meineNur){
     wrap.append(segLeiste());
+    const meinStandard = heuteZuerich();
+    const dateI = h("input",{type:"date",style:"max-width:170px"});
+    dateI.value = state.meineTag || meinStandard;
+
+    wrap.append(h("div",{class:"row",style:"margin-bottom:1.2rem;align-items:flex-end"},
+      h("div",{}, h("label",{text:"Tag"}), dateI)
+    ));
+
     const container = h("div",{});
     wrap.append(container);
-    if (state.listenModus==="abteilung")
-      zeichneAbtListe(container, state.bestellungen, "Noch keine Abteilungsbestellungen.");
-    else
-      zeichneKundeListe(container, state.kundenbestellungen, "Noch keine Kundenbestellungen.");
+
+    const meinTag = ()=> dateI.value || meinStandard;
+    function zeichneMeine(){
+      const tag = meinTag();
+      if (state.listenModus==="abteilung")
+        zeichneAbtListe(container,
+          state.bestellungen.filter(b=>zurichDatum(b.erstellt_am)===tag),
+          "Für diesen Tag gibt es keine Abteilungsbestellungen.");
+      else
+        zeichneKundeListe(container,
+          state.kundenbestellungen.filter(b=>zurichDatum(b.erstellt_am)===tag),
+          "Für diesen Tag gibt es keine Kundenbestellungen.");
+    }
+    function zeigeLaedt(){
+      clear(container);
+      container.append(h("div",{class:"empty"}, h("div",{class:"muted",text:"Lädt…"})));
+    }
+
+    dateI.addEventListener("change", async ()=>{
+      if (!dateI.value) dateI.value = meinStandard;
+      state.meineTag = dateI.value;
+      if (brauchtNachladen(meinTag())){ zeigeLaedt(); await ladeTagNach(meinTag()); }
+      zeichneMeine();
+    });
+
+    if (brauchtNachladen(meinTag())){
+      zeigeLaedt();
+      ladeTagNach(meinTag()).then(zeichneMeine);
+    } else {
+      zeichneMeine();
+    }
     return;
   }
 
@@ -871,10 +1019,17 @@ function renderBestellungen(wrap, meineNur){
   const countLbl = h("div",{class:"muted",style:"font-size:13px"});
   const printBtn = darfDrucken ? h("button",{class:"btn btn-sm",text:"Tag drucken"}) : null;
 
+  const refreshBtn = h("button",{class:"btn-ghost btn-sm",text:"Aktualisieren"});
+  refreshBtn.addEventListener("click", async ()=>{
+    refreshBtn.disabled=true; refreshBtn.textContent="Lädt…";
+    await ladeDaten();
+    renderApp();
+  });
+
   wrap.append(h("div",{class:"row",style:"margin-bottom:1.2rem;align-items:flex-end"},
     h("div",{}, h("label",{text:"Tag"}), dateI),
     h("div",{}, h("label",{text:"Abteilung"}), abtSel),
-    h("div",{style:"margin-left:auto;display:flex;align-items:center;gap:.7rem"}, countLbl, printBtn)
+    h("div",{style:"margin-left:auto;display:flex;align-items:center;gap:.7rem"}, countLbl, refreshBtn, printBtn)
   ));
 
   const container = h("div",{});
@@ -980,9 +1135,16 @@ function renderBestellungen(wrap, meineNur){
     }
   }
 
-  dateI.addEventListener("change",()=>{
+  function zeigeLaedt(){
+    countLbl.textContent = "Lädt…";
+    clear(container);
+    container.append(h("div",{class:"empty"}, h("div",{class:"muted",text:"Lädt…"})));
+  }
+
+  dateI.addEventListener("change", async ()=>{
     if (!dateI.value) dateI.value = standardTag;
     state.bestellTag = dateI.value;
+    if (brauchtNachladen(aktTag())){ zeigeLaedt(); await ladeTagNach(aktTag()); }
     baueAbtOptionen(); zeichne();
   });
   abtSel.addEventListener("change", zeichne);
@@ -992,8 +1154,13 @@ function renderBestellungen(wrap, meineNur){
     druckeTag(nachAbt(abtTag()), nachAbt(kundeTag()), eventsAkt(), tag, mitt?mitt.text:"", sammleTagesStornos(tag));
   });
 
-  baueAbtOptionen();
-  zeichne();
+  if (brauchtNachladen(aktTag())){
+    zeigeLaedt();
+    ladeTagNach(aktTag()).then(()=>{ baueAbtOptionen(); zeichne(); });
+  } else {
+    baueAbtOptionen();
+    zeichne();
+  }
 
   // ---- Liste: Abteilungsbestellungen ----
   // Einzelnes Ticket: Abteilungsbestellung
