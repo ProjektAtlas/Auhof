@@ -317,7 +317,11 @@ function fmtTagLang(d){
 function abteilungName(id){
   if (!id) return "";
   const a = (state.abteilungenListe||[]).find(x=>x.id===id);
-  return a ? a.name : "";
+  if (a) return a.name;
+  // Fallback: inaktive Abteilungen stehen nicht mehr in abteilungenListe,
+  // sind aber (für Admin/Leitung) in state.konten -> Name bleibt anzeigbar.
+  const k = (state.konten||[]).find(x=>x.id===id);
+  return k ? k.name : "";
 }
 
 // ---- Bestellschluss (tägliche Uhrzeit, Zeitzone Europe/Zurich) ----
@@ -363,10 +367,14 @@ async function ladeKontoUndStarten(){
   const { data:{ user } } = await sb.auth.getUser();
   if (!user) return { error:"Nicht angemeldet." };
   const { data:konto, error } = await sb.from("konten")
-    .select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde").eq("id", user.id).single();
+    .select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde,aktiv").eq("id", user.id).single();
   if (error || !konto){
     await sb.auth.signOut();
     return { error:"Für dieses Konto ist noch kein Zugang eingerichtet." };
+  }
+  if (konto.aktiv === false){
+    await sb.auth.signOut();
+    return { error:"Diese Abteilung ist deaktiviert. Bitte an die Leitung wenden." };
   }
   state.konto = konto;
   await ladeDaten();
@@ -450,7 +458,7 @@ async function ladeDaten(){
   }
   if (r==="admin" || r==="leitung"){
     abfragen.konten = sb.from("konten")
-      .select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde,sammelbestellung")
+      .select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde,sammelbestellung,aktiv")
       .order("rolle").order("name");
   }
 
@@ -1759,6 +1767,14 @@ function renderKundeFormular(wrap, editB=null){
     ...state.abteilungenListe.map(a=>h("option",{value:a.id,
       ...(a.id===f.abhol_abteilung_id?{selected:"selected"}:{}), text:a.name}))
   );
+  // Falls die ursprünglich gewählte Abhol-Abteilung inzwischen inaktiv ist,
+  // steht sie nicht mehr in abteilungenListe. Damit sie beim Bearbeiten nicht
+  // verloren geht, fügen wir sie als markierte Option wieder hinzu.
+  if (f.abhol_abteilung_id &&
+      !state.abteilungenListe.some(a=>a.id===f.abhol_abteilung_id)){
+    abholSel.append(h("option",{value:f.abhol_abteilung_id, selected:"selected",
+      text:(abteilungName(f.abhol_abteilung_id)||"Unbekannt")+" (inaktiv)"}));
+  }
 
   const rechnungI   = h("textarea",{rows:"2",placeholder:"Strasse, PLZ Ort"}, f.rechnungsadresse);
   const lieferI     = h("textarea",{rows:"2",placeholder:"Strasse, PLZ Ort"}, f.lieferadresse);
@@ -2297,7 +2313,8 @@ function renderAbteilungen(wrap){
 
     // Name + Kürzel: normal als Text, per "Umbenennen" editierbar.
     // Umbenennen ändert serverseitig auch die Login-E-Mail -> Warnhinweis vor dem Speichern.
-    const nameCell    = h("td",{text:k.name});
+    const nameCell    = h("td",{}, k.name,
+      k.aktiv===false ? h("small",{class:"muted",style:"margin-left:.45rem",text:"(inaktiv)"}) : null);
     const kuerzelCell = h("td",{class:"mono",text:k.kuerzel||"—"});
     const umbenennenBtn = h("button",{class:"btn-ghost btn-sm",text:"Umbenennen",onclick:()=>{
       clear(nameCell); clear(kuerzelCell);
@@ -2327,13 +2344,39 @@ function renderAbteilungen(wrap){
       nameI2.focus();
     }});
 
-    tbody.append(h("tr",{},
+    // Aktiv/Inaktiv: Abteilung stilllegen (kein Login, aus Auswahllisten raus)
+    // bzw. wieder reaktivieren. Historische Daten bleiben stets erhalten.
+    const aktivBtn = h("button",{class:"btn-ghost btn-sm",
+      text: k.aktiv===false ? "Aktivieren" : "Inaktiv setzen",
+      onclick: async ()=>{
+        const gewuenscht = (k.aktiv===false);   // inaktiv -> true (aktivieren); aktiv -> false (stilllegen)
+        if (!gewuenscht && !confirm(
+          'Abteilung „'+k.name+'“ auf inaktiv setzen?\n\n'+
+          'Sie kann sich dann nicht mehr anmelden und erscheint nicht mehr in den Auswahllisten '+
+          '(z. B. als Abhol-Abteilung). Bestehende Bestellungen und Auswertungen bleiben erhalten. '+
+          'Du kannst die Abteilung jederzeit wieder aktivieren.')) return;
+        aktivBtn.disabled=true; aktivBtn.textContent="…";
+        const { error } = await sb.rpc("abteilung_aktiv_setzen", { p_id:k.id, p_aktiv:gewuenscht });
+        if (error){
+          aktivBtn.disabled=false;
+          aktivBtn.textContent = k.aktiv===false ? "Aktivieren" : "Inaktiv setzen";
+          toast(error.message||"Konnte den Status nicht ändern.","err");
+          return;
+        }
+        toast(gewuenscht
+          ? ('Abteilung „'+k.name+'“ aktiviert.')
+          : ('Abteilung „'+k.name+'“ auf inaktiv gesetzt.'),"ok");
+        await ladeDaten(); renderApp();
+      }});
+
+    tbody.append(h("tr",{...(k.aktiv===false?{style:"background:rgba(136,33,26,.06)"}:{})},
       nameCell,
       kuerzelCell,
       zelleAbt,
       zelleKunde,
       h("td",{style:"text-align:center"}, sammelCb),
-      h("td",{style:"text-align:right"}, umbenennenBtn)
+      h("td",{style:"text-align:right"},
+        h("div",{class:"row",style:"justify-content:flex-end;gap:.4rem;flex-wrap:wrap"}, umbenennenBtn, aktivBtn))
     ));
   });
   wrap.append(h("div",{class:"card",style:"padding:.6rem"},
@@ -2348,12 +2391,13 @@ function renderAbteilungen(wrap){
     ),
     abt.length===0 ? h("div",{class:"empty"},h("div",{class:"muted",text:"Noch keine Abteilungen."})) : null,
     h("div",{class:"muted",style:"font-size:12px;padding:.5rem .5rem 0",
-      text:"Keine Zeit eingetragen = kein Bestellschluss (rund um die Uhr möglich). Die Zeit gilt täglich. „Bestellschluss Abteilung“ betrifft die Abteilungsbestellungen, „Bestellschluss Kunden“ die Kundenbestellungen – beide sind voneinander unabhängig. Sammelbestellung: Haken = Tagesbestellungen werden beim „Tag drucken“ pro Abteilung auf einem Blatt zusammengefasst."})
+      text:"Keine Zeit eingetragen = kein Bestellschluss (rund um die Uhr möglich). Die Zeit gilt täglich. „Bestellschluss Abteilung“ betrifft die Abteilungsbestellungen, „Bestellschluss Kunden“ die Kundenbestellungen – beide sind voneinander unabhängig. Sammelbestellung: Haken = Tagesbestellungen werden beim „Tag drucken“ pro Abteilung auf einem Blatt zusammengefasst. „Inaktiv setzen“ legt eine weggefallene Abteilung still: kein Login mehr und keine Auswahl (z. B. als Abhol-Abteilung). Bestehende Bestellungen und Auswertungen bleiben erhalten; die Abteilung lässt sich jederzeit wieder aktivieren."})
   ));
 
   // --- Passwort setzen (jedes Konto) ---
   const istLeitung = state.konto.rolle === "leitung";
-  const zielKonten = istLeitung ? state.konten.filter(k=>k.rolle!=="admin") : state.konten;
+  const zielKonten = (istLeitung ? state.konten.filter(k=>k.rolle!=="admin") : state.konten)
+    .filter(k=>!(k.rolle==="abteilung" && k.aktiv===false));   // inaktive Abteilungen raus
   const zielSel = h("select",{},
     ...zielKonten.map(k=>h("option",{value:k.name,text:k.name+" ("+(ROLLE_LABEL[k.rolle]||k.rolle)+")"}))
   );
@@ -2444,7 +2488,8 @@ function renderAuswertung(wrap){
   const abteilungen = state.konten.filter(k=>k.rolle==="abteilung")
     .sort((a,b)=>String(a.name).localeCompare(String(b.name)));
   abteilungen.forEach(k=>abtSel.append(
-    h("option",{value:k.kuerzel||k.name, text:k.name+(k.kuerzel?" ("+k.kuerzel+")":"")})
+    h("option",{value:k.kuerzel||k.name,
+      text:k.name+(k.kuerzel?" ("+k.kuerzel+")":"")+(k.aktiv===false?" – inaktiv":"")})
   ));
   abtSel.value = state.auswAbt || "";
 
