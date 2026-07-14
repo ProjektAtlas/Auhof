@@ -258,6 +258,7 @@ const state = {
   listenModus:"abteilung", // Umschalter in den Listen: "abteilung" | "kunde" | "event"
   bestellTag:null,       // gewählter Tag in "Bestellungen" (YYYY-MM-DD), null = heute
   meineTag:null,         // gewählter Tag in „Meine Bestellungen" (YYYY-MM-DD), null = heute
+  eventListeTag:null,    // gewählter Tag im Event-Sicht-Tab (z. B. Kantine), null = heute
   geladeneTage:new Set(),// Tage ausserhalb des Ladefensters, die gezielt nachgeladen wurden
   ladeFehler:null,       // Fehlermeldung, falls das Laden der Daten fehlschlug
   auswVon:null, auswBis:null, // Zeitraum in "Auswertung" (YYYY-MM-DD), null = heute
@@ -317,11 +318,7 @@ function fmtTagLang(d){
 function abteilungName(id){
   if (!id) return "";
   const a = (state.abteilungenListe||[]).find(x=>x.id===id);
-  if (a) return a.name;
-  // Fallback: inaktive Abteilungen stehen nicht mehr in abteilungenListe,
-  // sind aber (für Admin/Leitung) in state.konten -> Name bleibt anzeigbar.
-  const k = (state.konten||[]).find(x=>x.id===id);
-  return k ? k.name : "";
+  return a ? a.name : "";
 }
 
 // ---- Bestellschluss (tägliche Uhrzeit, Zeitzone Europe/Zurich) ----
@@ -367,14 +364,10 @@ async function ladeKontoUndStarten(){
   const { data:{ user } } = await sb.auth.getUser();
   if (!user) return { error:"Nicht angemeldet." };
   const { data:konto, error } = await sb.from("konten")
-    .select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde,aktiv").eq("id", user.id).single();
+    .select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde,event_sicht").eq("id", user.id).single();
   if (error || !konto){
     await sb.auth.signOut();
     return { error:"Für dieses Konto ist noch kein Zugang eingerichtet." };
-  }
-  if (konto.aktiv === false){
-    await sb.auth.signOut();
-    return { error:"Diese Abteilung ist deaktiviert. Bitte an die Leitung wenden." };
   }
   state.konto = konto;
   await ladeDaten();
@@ -388,6 +381,7 @@ function resetState(){
   state.kundenbestellungen=[]; state.eventbestellungen=[]; state.abteilungenListe=[];
   state.tagesmitteilungen=[]; state.tagesinfoDatum=null; state.bestellTag=null;
   state.meineTag=null; state.geladeneTage=new Set(); state.ladeFehler=null;
+  state.eventListeTag=null;
   state.auswVon=null; state.auswBis=null; state.auswAbt="";
 }
 
@@ -455,10 +449,14 @@ async function ladeDaten(){
     abfragen.eventbestellungen = sb.from("eventbestellungen").select("*")
       .gte("erstellt_am", fensterVon).order("erstellt_am",{ascending:false});
     abfragen.tagesmitteilungen = sb.from("tagesmitteilungen").select("*").order("datum",{ascending:false});
+  } else if (state.konto.event_sicht){
+    // Abteilung mit Event-Sicht (z. B. Kantine): nur Eventbestellungen, kein Infoblatt
+    abfragen.eventbestellungen = sb.from("eventbestellungen").select("*")
+      .gte("erstellt_am", fensterVon).order("erstellt_am",{ascending:false});
   }
   if (r==="admin" || r==="leitung"){
     abfragen.konten = sb.from("konten")
-      .select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde,sammelbestellung,aktiv")
+      .select("id,name,rolle,kuerzel,bestellschluss,bestellschluss_kunde,sammelbestellung,event_sicht")
       .order("rolle").order("name");
   }
 
@@ -525,7 +523,7 @@ async function ladeTagNach(tag){
   if (kb.error){ toast("Nachladen fehlgeschlagen: "+kb.error.message,"err"); return false; }
   mergeNachId(state.kundenbestellungen, kb.data);
 
-  if (r==="admin" || r==="leitung" || r==="konditorei"){
+  if (r==="admin" || r==="leitung" || r==="konditorei" || state.konto.event_sicht){
     const eb = await sb.from("eventbestellungen").select("*")
       .gte("erstellt_am", von).lte("erstellt_am", bis)
       .order("erstellt_am",{ascending:false});
@@ -538,7 +536,11 @@ async function ladeTagNach(tag){
 }
 
 function tabsFor(rolle){
-  if (rolle==="abteilung") return [["bestellen","Bestellen"],["kunde","Kundenbestellung"],["meine","Meine Bestellungen"]];
+  if (rolle==="abteilung"){
+    const t = [["bestellen","Bestellen"],["kunde","Kundenbestellung"],["meine","Meine Bestellungen"]];
+    if (state.konto?.event_sicht) t.push(["events","Eventbestellungen"]);
+    return t;
+  }
   if (rolle==="konditorei") return [["alle","Bestellungen"]];
   if (rolle==="leitung")   return [["alle","Bestellungen"],["event","Bestellen Event"],["auswertung","Auswertung"],["verwaltung", ROLLE_LABEL.leitung]];
   if (rolle==="admin")     return [["alle","Bestellungen"],["event","Bestellen Event"],["auswertung","Auswertung"],["verwaltung", ROLLE_LABEL.admin]];
@@ -640,6 +642,7 @@ function renderApp(){
   else if (view==="kunde")      renderKundeFormular(wrap, state.editKunde);
   else if (view==="event")      renderEventFormular(wrap, state.editEvent);
   else if (view==="meine")      renderBestellungen(wrap, true);
+  else if (view==="events")     renderKantineEvents(wrap);
   else if (view==="alle")       renderBestellungen(wrap, false);
   else if (view==="auswertung") renderAuswertung(wrap);
   else if (view==="verwaltung") renderVerwaltung(wrap);
@@ -1704,6 +1707,90 @@ function starteEventAendern(b){
 }
 
 // =====================================================================
+//  Event-Sicht-Tab (z. B. Kantine): Eventbestellungen ansehen + drucken.
+//  Rolle bleibt „abteilung"; nur Konten mit event_sicht sehen diesen Tab.
+//  Keine Bearbeitung, kein Storno, kein Druck-Zurücksetzen. Kein Tagesdruck.
+//  Standardtag = heute; ältere Tage werden bei Bedarf nachgeladen.
+// =====================================================================
+function renderKantineEvents(wrap){
+  const standardTag = heuteZuerich();
+  const dateI = h("input",{type:"date",style:"max-width:170px"});
+  dateI.value = state.eventListeTag || standardTag;
+
+  const refreshBtn = h("button",{class:"btn-ghost btn-sm",text:"Aktualisieren"});
+  refreshBtn.addEventListener("click", async ()=>{
+    refreshBtn.disabled=true; refreshBtn.textContent="Lädt…";
+    await ladeDaten();
+    renderApp();
+  });
+
+  wrap.append(h("div",{class:"row",style:"margin-bottom:1.2rem;align-items:flex-end"},
+    h("div",{}, h("label",{text:"Tag"}), dateI),
+    h("div",{style:"margin-left:auto"}, refreshBtn)
+  ));
+
+  const container = h("div",{});
+  wrap.append(container);
+
+  const aktTag = ()=> dateI.value || standardTag;
+  const nrSort = (x,y)=>String(x.bestellnr).localeCompare(String(y.bestellnr));
+
+  // Einzelnes Event-Ticket: nur Ansehen + Drucken (markiert als gedruckt).
+  function ticket(b){
+    const top = h("div",{class:"ticket-top"},
+      h("span",{class:"ticket-nr",text:b.bestellnr}),
+      b.storniert ? h("span",{class:"badge-storno",text:"Storniert"}) : druckBadge(b),
+      h("span",{class:"muted",style:"font-size:13px",text:b.veranstaltung||""}),
+      h("span",{class:"ticket-meta",text:fmtDatum(b.erstellt_am)})
+    );
+    const body = h("div",{class:"ticket-body"});
+    eventInfoPaare(b).forEach(([k,v])=>{
+      body.append(h("div",{class:"kv"}, h("span",{class:"k",text:k}), h("span",{class:"v",text:v})));
+    });
+    [["Bestelltext",b.freitext],["Hinweis",b.hinweis],["Aus der Konditorei",b.konditorei_bestellung]]
+      .forEach(([k,v])=>{
+        if (!v) return;
+        body.append(h("div",{class:"kv-div"}));
+        body.append(h("div",{class:"kv"}, h("span",{class:"k",text:k}), h("span",{class:"v",text:v})));
+      });
+    const actions = b.storniert ? null : h("div",{class:"ticket-actions"},
+      h("button",{class:"btn-ghost btn-sm",text:"Drucken",onclick:()=>druckeEventBestellung(b)})
+    );
+    return h("div",{class:"ticket"+(b.storniert?" storniert":"")}, top, body, actions);
+  }
+
+  function zeichne(){
+    clear(container);
+    const tag = aktTag();
+    const liste = (state.eventbestellungen||[]).filter(b=>zurichDatum(b.erstellt_am)===tag);
+    if (liste.length===0){
+      container.append(h("div",{class:"empty"},
+        h("div",{class:"muted",text:"Für diesen Tag gibt es keine Eventbestellungen."})));
+      return;
+    }
+    [...liste].sort(nrSort).forEach(b=> container.append(ticket(b)));
+  }
+  function zeigeLaedt(){
+    clear(container);
+    container.append(h("div",{class:"empty"}, h("div",{class:"muted",text:"Lädt…"})));
+  }
+
+  dateI.addEventListener("change", async ()=>{
+    if (!dateI.value) dateI.value = standardTag;
+    state.eventListeTag = dateI.value;
+    if (brauchtNachladen(aktTag())){ zeigeLaedt(); await ladeTagNach(aktTag()); }
+    zeichne();
+  });
+
+  if (brauchtNachladen(aktTag())){
+    zeigeLaedt();
+    ladeTagNach(aktTag()).then(zeichne);
+  } else {
+    zeichne();
+  }
+}
+
+// =====================================================================
 //  Kundenbestellung: Formular (Abteilung) — Anlegen / Ändern
 // =====================================================================
 function renderKundeFormular(wrap, editB=null){
@@ -1767,14 +1854,6 @@ function renderKundeFormular(wrap, editB=null){
     ...state.abteilungenListe.map(a=>h("option",{value:a.id,
       ...(a.id===f.abhol_abteilung_id?{selected:"selected"}:{}), text:a.name}))
   );
-  // Falls die ursprünglich gewählte Abhol-Abteilung inzwischen inaktiv ist,
-  // steht sie nicht mehr in abteilungenListe. Damit sie beim Bearbeiten nicht
-  // verloren geht, fügen wir sie als markierte Option wieder hinzu.
-  if (f.abhol_abteilung_id &&
-      !state.abteilungenListe.some(a=>a.id===f.abhol_abteilung_id)){
-    abholSel.append(h("option",{value:f.abhol_abteilung_id, selected:"selected",
-      text:(abteilungName(f.abhol_abteilung_id)||"Unbekannt")+" (inaktiv)"}));
-  }
 
   const rechnungI   = h("textarea",{rows:"2",placeholder:"Strasse, PLZ Ort"}, f.rechnungsadresse);
   const lieferI     = h("textarea",{rows:"2",placeholder:"Strasse, PLZ Ort"}, f.lieferadresse);
@@ -2311,10 +2390,24 @@ function renderAbteilungen(wrap){
         : ('Sammelbestellung für „'+k.name+'“ deaktiviert.'),"ok");
     });
 
+    // Event-Sicht: Haken speichert sofort (ohne Re-Render)
+    const eventCb = h("input",{type:"checkbox",style:"width:auto;margin:0;cursor:pointer"});
+    eventCb.checked = !!k.event_sicht;
+    eventCb.addEventListener("change", async ()=>{
+      eventCb.disabled = true;
+      const gewuenscht = eventCb.checked;
+      const { error } = await rufeFunktion({aktion:"event_sicht_setzen", id:k.id, event_sicht: gewuenscht});
+      eventCb.disabled = false;
+      if (error){ eventCb.checked = !gewuenscht; toast(error,"err"); return; }
+      k.event_sicht = gewuenscht;
+      toast(gewuenscht
+        ? ('Event-Sicht für „'+k.name+'“ aktiviert.')
+        : ('Event-Sicht für „'+k.name+'“ deaktiviert.'),"ok");
+    });
+
     // Name + Kürzel: normal als Text, per "Umbenennen" editierbar.
     // Umbenennen ändert serverseitig auch die Login-E-Mail -> Warnhinweis vor dem Speichern.
-    const nameCell    = h("td",{}, k.name,
-      k.aktiv===false ? h("small",{class:"muted",style:"margin-left:.45rem",text:"(inaktiv)"}) : null);
+    const nameCell    = h("td",{text:k.name});
     const kuerzelCell = h("td",{class:"mono",text:k.kuerzel||"—"});
     const umbenennenBtn = h("button",{class:"btn-ghost btn-sm",text:"Umbenennen",onclick:()=>{
       clear(nameCell); clear(kuerzelCell);
@@ -2344,39 +2437,14 @@ function renderAbteilungen(wrap){
       nameI2.focus();
     }});
 
-    // Aktiv/Inaktiv: Abteilung stilllegen (kein Login, aus Auswahllisten raus)
-    // bzw. wieder reaktivieren. Historische Daten bleiben stets erhalten.
-    const aktivBtn = h("button",{class:"btn-ghost btn-sm",
-      text: k.aktiv===false ? "Aktivieren" : "Inaktiv setzen",
-      onclick: async ()=>{
-        const gewuenscht = (k.aktiv===false);   // inaktiv -> true (aktivieren); aktiv -> false (stilllegen)
-        if (!gewuenscht && !confirm(
-          'Abteilung „'+k.name+'“ auf inaktiv setzen?\n\n'+
-          'Sie kann sich dann nicht mehr anmelden und erscheint nicht mehr in den Auswahllisten '+
-          '(z. B. als Abhol-Abteilung). Bestehende Bestellungen und Auswertungen bleiben erhalten. '+
-          'Du kannst die Abteilung jederzeit wieder aktivieren.')) return;
-        aktivBtn.disabled=true; aktivBtn.textContent="…";
-        const { error } = await sb.rpc("abteilung_aktiv_setzen", { p_id:k.id, p_aktiv:gewuenscht });
-        if (error){
-          aktivBtn.disabled=false;
-          aktivBtn.textContent = k.aktiv===false ? "Aktivieren" : "Inaktiv setzen";
-          toast(error.message||"Konnte den Status nicht ändern.","err");
-          return;
-        }
-        toast(gewuenscht
-          ? ('Abteilung „'+k.name+'“ aktiviert.')
-          : ('Abteilung „'+k.name+'“ auf inaktiv gesetzt.'),"ok");
-        await ladeDaten(); renderApp();
-      }});
-
-    tbody.append(h("tr",{...(k.aktiv===false?{style:"background:rgba(136,33,26,.06)"}:{})},
+    tbody.append(h("tr",{},
       nameCell,
       kuerzelCell,
       zelleAbt,
       zelleKunde,
       h("td",{style:"text-align:center"}, sammelCb),
-      h("td",{style:"text-align:right"},
-        h("div",{class:"row",style:"justify-content:flex-end;gap:.4rem;flex-wrap:wrap"}, umbenennenBtn, aktivBtn))
+      h("td",{style:"text-align:center"}, eventCb),
+      h("td",{style:"text-align:right"}, umbenennenBtn)
     ));
   });
   wrap.append(h("div",{class:"card",style:"padding:.6rem"},
@@ -2385,19 +2453,18 @@ function renderAbteilungen(wrap){
         h("thead",{}, h("tr",{},
           h("th",{text:"Abteilung"}), h("th",{text:"Kürzel"}),
           h("th",{text:"Bestellschluss Abteilung"}), h("th",{text:"Bestellschluss Kunden"}),
-          h("th",{text:"Sammelbestellung"}), h("th",{text:""}))),
+          h("th",{text:"Sammelbestellung"}), h("th",{text:"Event-Sicht"}), h("th",{text:""}))),
         tbody
       )
     ),
     abt.length===0 ? h("div",{class:"empty"},h("div",{class:"muted",text:"Noch keine Abteilungen."})) : null,
     h("div",{class:"muted",style:"font-size:12px;padding:.5rem .5rem 0",
-      text:"Keine Zeit eingetragen = kein Bestellschluss (rund um die Uhr möglich). Die Zeit gilt täglich. „Bestellschluss Abteilung“ betrifft die Abteilungsbestellungen, „Bestellschluss Kunden“ die Kundenbestellungen – beide sind voneinander unabhängig. Sammelbestellung: Haken = Tagesbestellungen werden beim „Tag drucken“ pro Abteilung auf einem Blatt zusammengefasst. „Inaktiv setzen“ legt eine weggefallene Abteilung still: kein Login mehr und keine Auswahl (z. B. als Abhol-Abteilung). Bestehende Bestellungen und Auswertungen bleiben erhalten; die Abteilung lässt sich jederzeit wieder aktivieren."})
+      text:"Keine Zeit eingetragen = kein Bestellschluss (rund um die Uhr möglich). Die Zeit gilt täglich. „Bestellschluss Abteilung“ betrifft die Abteilungsbestellungen, „Bestellschluss Kunden“ die Kundenbestellungen – beide sind voneinander unabhängig. Sammelbestellung: Haken = Tagesbestellungen werden beim „Tag drucken“ pro Abteilung auf einem Blatt zusammengefasst. Event-Sicht: Haken = Abteilung sieht den Tab „Eventbestellungen“ und darf Eventbestellungen ansehen und drucken (nicht erfassen, ändern oder stornieren)."})
   ));
 
   // --- Passwort setzen (jedes Konto) ---
   const istLeitung = state.konto.rolle === "leitung";
-  const zielKonten = (istLeitung ? state.konten.filter(k=>k.rolle!=="admin") : state.konten)
-    .filter(k=>!(k.rolle==="abteilung" && k.aktiv===false));   // inaktive Abteilungen raus
+  const zielKonten = istLeitung ? state.konten.filter(k=>k.rolle!=="admin") : state.konten;
   const zielSel = h("select",{},
     ...zielKonten.map(k=>h("option",{value:k.name,text:k.name+" ("+(ROLLE_LABEL[k.rolle]||k.rolle)+")"}))
   );
@@ -2488,8 +2555,7 @@ function renderAuswertung(wrap){
   const abteilungen = state.konten.filter(k=>k.rolle==="abteilung")
     .sort((a,b)=>String(a.name).localeCompare(String(b.name)));
   abteilungen.forEach(k=>abtSel.append(
-    h("option",{value:k.kuerzel||k.name,
-      text:k.name+(k.kuerzel?" ("+k.kuerzel+")":"")+(k.aktiv===false?" – inaktiv":"")})
+    h("option",{value:k.kuerzel||k.name, text:k.name+(k.kuerzel?" ("+k.kuerzel+")":"")})
   ));
   abtSel.value = state.auswAbt || "";
 
